@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PagooTalk</title>
+    <script src="https://cdn.jsdelivr.net/npm/simple-peer@9.11.1/simplepeer.min.js"></script>
+    <style>
+        :root {
+            --bg-light: #f8f9fa;
+            --bg-panel: rgba(255, 255, 255, 0.85);
+            --text-primary: #1a1a2e;
+            --text-secondary: #6c757d;
+            --accent-gradient: linear-gradient(135deg, #a855f7, #ec4899);
+            --accent-color: #a855f7;
+            --accent-hover: #9333ea;
+            --glass-border: rgba(255, 255, 255, 0.6);
+            --shadow: 0 8px 32px rgba(168, 85, 247, 0.15);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+
+        body {
+            background: linear-gradient(135deg, #f3e7ff 0%, #ffe6f2 100%);
+            color: var(--text-primary);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideInRight { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+
+        .app-container {
+            width: 95%; max-width: 1400px; height: 90vh;
+            background: var(--bg-panel); backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border); border-radius: 24px;
+            display: flex; overflow: hidden;
+            box-shadow: var(--shadow);
+            animation: fadeIn 0.6s ease-out;
+        }
+
+        .sidebar {
+            width: 320px; background: rgba(255, 255, 255, 0.5);
+            border-right: 1px solid var(--glass-border);
+            display: flex; flex-direction: column;
+        }
+
+        .sidebar-header { padding: 20px; border-bottom: 1px solid var(--glass-border); }
+        .user-profile { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; cursor: pointer; padding: 10px; border-radius: 12px; transition: 0.2s; }
+        .user-profile:hover { background: rgba(168, 85, 247, 0.1); }
+        .avatar {
+            width: 45px; height: 45px; border-radius: 50%; object-fit: cover;
+            border: 2px solid transparent; background: var(--accent-gradient);
+            display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;
+        }
+        .user-info { flex: 1; overflow: hidden; }
+        .user-name { font-weight: 700; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .user-id { font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; }
+
+        .action-bar { display: flex; gap: 8px; margin-bottom: 15px; }
+        .btn-small {
+            flex: 1; padding: 8px; border: none; border-radius: 8px; cursor: pointer;
+            font-size: 0.8rem; font-weight: 600; color: white; background: var(--accent-gradient);
+            transition: 0.2s;
+        }
+        .btn-small:hover { opacity: 0.9; transform: translateY(-1px); }
+
+        .chat-list { flex: 1; overflow-y: auto; padding: 10px; }
+        .chat-item {
+            padding: 12px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; gap: 12px;
+            margin-bottom: 6px; transition: all 0.2s; border: 1px solid transparent; animation: slideInRight 0.3s ease-out;
+        }
+        .chat-item:hover { background: rgba(255, 255, 255, 0.8); }
+        .chat-item.active { background: rgba(168, 85, 247, 0.15); border-color: rgba(168, 85, 247, 0.3); }
+        
+        .chat-details { flex: 1; overflow: hidden; }
+        .chat-name { font-weight: 600; font-size: 0.9rem; }
+        .chat-last-msg { font-size: 0.8rem; color: var(--text-secondary); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .unread-badge {
+            background: #ec4899; color: white; font-size: 0.7rem; font-weight: bold;
+            padding: 2px 8px; border-radius: 10px; flex-shrink: 0; animation: pulse 2s infinite;
+        }
+
+        .chat-area { flex: 1; display: flex; flex-direction: column; position: relative; background: rgba(255, 255, 255, 0.3); }
+        
+        .chat-header {
+            padding: 15px 25px; background: rgba(255, 255, 255, 0.6); border-bottom: 1px solid var(--glass-border);
+            display: flex; justify-content: space-between; align-items: center; backdrop-filter: blur(10px);
+        }
+        .chat-header-info { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+        .chat-header-actions { display: flex; gap: 10px; }
+        .icon-btn {
+            width: 40px; height: 40px; border-radius: 50%; border: none; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; font-size: 1.1rem;
+            transition: all 0.2s; background: rgba(255,255,255,0.8); color: var(--text-primary);
+        }
+        .icon-btn:hover { background: var(--accent-gradient); color: white; transform: scale(1.1); }
+
+        .chat-messages { flex: 1; padding: 25px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-secondary); text-align: center; }
+
+        .message-bubble {
+            max-width: 75%; padding: 12px 18px; border-radius: 18px 18px 4px 18px;
+            background: white; color: var(--text-primary); animation: fadeIn 0.3s ease-out;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05); align-self: flex-end; position: relative;
+        }
+        .message-bubble.incoming { background: rgba(168, 85, 247, 0.1); align-self: flex-start; border-radius: 18px 18px 18px 4px; }
+        .message-sender { font-size: 0.75rem; color: var(--accent-color); font-weight: 700; margin-bottom: 4px; }
+        .message-media { max-width: 100%; border-radius: 12px; margin-top: 8px; cursor: pointer; transition: 0.2s; }
+        .message-media:hover { transform: scale(1.02); }
+        .message-media-img { max-width: 300px; max-height: 300px; object-fit: cover; }
+        .message-media-video { max-width: 400px; max-height: 300px; }
+        .message-comment { font-size: 0.85rem; margin-top: 6px; font-style: italic; color: var(--text-secondary); }
+        .message-time { font-size: 0.7rem; color: var(--text-secondary); margin-top: 6px; text-align: right; }
+
+        .file-attachment {
+            display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+            background: rgba(168, 85, 247, 0.1); border-radius: 10px; margin-top: 6px;
+            border: 1px solid rgba(168, 85, 247, 0.2); min-width: 220px;
+        }
+        .file-icon { font-size: 1.8rem; }
+        .file-info { flex: 1; overflow: hidden; }
+        .file-name { font-weight: 600; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .file-size { font-size: 0.75rem; color: var(--text-secondary); }
+        .file-download {
+            padding: 6px 12px; background: var(--accent-gradient); color: white;
+            border: none; border-radius: 6px; cursor: pointer; font-size: 0.8rem;
+            text-decoration: none; transition: 0.2s;
+        }
+        .file-download:hover { opacity: 0.9; transform: scale(1.05); }
+
+        .chat-input-area {
+            padding: 20px 25px; background: rgba(255, 255, 255, 0.8); border-top: 1px solid var(--glass-border);
+            display: flex; align-items: center; gap: 12px; backdrop-filter: blur(10px);
+        }
+        .chat-input {
+            flex: 1; background: white; border: 1px solid var(--glass-border);
+            padding: 14px 20px; border-radius: 50px; color: var(--text-primary); outline: none; font-size: 0.95rem; transition: 0.3s;
+        }
+        .chat-input:focus { border-color: var(--accent-color); box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.1); }
+
+        #group-call-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(248, 249, 250, 0.95); backdrop-filter: blur(15px);
+            z-index: 100; display: none; flex-direction: row;
+        }
+        #group-call-overlay.active { display: flex; animation: fadeIn 0.4s ease-out; }
+
+        .call-main-area { flex: 1; display: flex; flex-direction: column; padding: 20px; }
+        .call-grid {
+            flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px; padding: 20px; overflow-y: auto; align-content: center;
+        }
+        .video-tile {
+            background: #1a1a2e; border-radius: 16px; overflow: hidden; position: relative;
+            aspect-ratio: 16/9; box-shadow: 0 4px 15px rgba(0,0,0,0.2); animation: fadeIn 0.3s;
+        }
+        .video-tile video { width: 100%; height: 100%; object-fit: cover; }
+        .video-tile .participant-name {
+            position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.6);
+            color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: 600;
+        }
+        .video-tile .screen-share-badge {
+            position: absolute; top: 10px; right: 10px; background: #ef4444; color: white;
+            padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: bold;
+        }
+
+        .call-sidebar {
+            width: 280px; background: rgba(255, 255, 255, 0.8); border-left: 1px solid var(--glass-border);
+            display: flex; flex-direction: column; padding: 20px;
+        }
+        .participant-list { flex: 1; overflow-y: auto; margin-top: 15px; }
+        .participant-item {
+            display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 10px;
+            margin-bottom: 8px; background: rgba(255,255,255,0.5); transition: 0.2s;
+        }
+        .participant-item:hover { background: rgba(168, 85, 247, 0.1); }
+
+        .call-controls-bar {
+            display: flex; justify-content: center; gap: 15px; padding: 20px;
+            background: rgba(255, 255, 255, 0.9); border-top: 1px solid var(--glass-border);
+        }
+        .control-btn {
+            width: 50px; height: 50px; border-radius: 50%; border: none; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; font-size: 1.3rem;
+            transition: all 0.2s; background: white; color: var(--text-primary); box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .control-btn:hover { transform: scale(1.1); }
+        .control-btn.danger { background: #ef4444; color: white; }
+        .control-btn.muted { background: #ef4444; color: white; position: relative; }
+        .control-btn.muted::after { content: '/'; position: absolute; font-size: 1.5rem; font-weight: bold; }
+
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.4); backdrop-filter: blur(5px); z-index: 200;
+            display: none; align-items: center; justify-content: center;
+        }
+        .modal-overlay.active { display: flex; animation: fadeIn 0.3s; }
+        .modal {
+            background: white; padding: 30px; border-radius: 20px; width: 400px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.2); text-align: center;
+        }
+        .modal h3 { margin-bottom: 20px; color: var(--text-primary); }
+        .modal input, .modal select {
+            width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd;
+            border-radius: 10px; outline: none; font-size: 0.95rem;
+        }
+        .modal input:focus { border-color: var(--accent-color); }
+        .error-text { color: #ef4444; font-size: 0.85rem; margin-bottom: 10px; display: none; }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(168, 85, 247, 0.3); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(168, 85, 247, 0.6); }
+    </style>
+</head>
+<body>
+
+    <div class="modal-overlay" id="profile-modal">
+        <div class="modal">
+            <h3>Настройка профиля</h3>
+            <p class="error-text" id="profile-error"></p>
+            <input type="text" id="first-name" placeholder="Имя (только буквы)">
+            <input type="text" id="last-name" placeholder="Фамилия (только буквы)">
+            <label style="display:block; text-align:left; font-size:0.85rem; color:#666; margin-bottom:5px;">Аватарка (макс. 67 МБ)</label>
+            <input type="file" id="avatar-input" accept="image/*">
+            <button class="btn-small" style="width:100%; padding:12px;" onclick="saveProfile()">Сохранить и войти</button>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="group-modal">
+        <div class="modal">
+            <h3>Создать групповой чат</h3>
+            <input type="text" id="group-name" placeholder="Название группы">
+            <select id="invite-type">
+                <option value="multi">Многоразовая ссылка</option>
+                <option value="single">Единоразовая ссылка</option>
+            </select>
+            <button class="btn-small" style="width:100%; padding:12px;" onclick="createGroup()">Создать</button>
+            <div id="invite-code-display" style="margin-top:15px; padding:10px; background:#f3e7ff; border-radius:8px; font-family:monospace; display:none;"></div>
+        </div>
+    </div>
+
+    <div class="app-container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="user-profile" onclick="editProfile()">
+                    <div class="avatar" id="my-avatar">?</div>
+                    <div class="user-info">
+                        <div class="user-name" id="my-display-name">Загрузка...</div>
+                        <div class="user-id" id="my-id-display">...</div>
+                    </div>
+                </div>
+                <div class="action-bar">
+                    <button class="btn-small" onclick="openNewChat()">+ Чат</button>
+                    <button class="btn-small" onclick="openGroupModal()">+ Группа</button>
+                </div>
+                <input type="text" id="new-chat-id" class="chat-input" style="padding:10px; font-size:0.85rem; display:none;" placeholder="Введите ID или код приглашения">
+                <button id="add-chat-btn" class="btn-small" style="display:none; margin-top:8px;" onclick="processInviteOrId()">Добавить</button>
+            </div>
+            <div class="chat-list" id="chat-list"></div>
+        </div>
+
+        <div class="chat-area">
+            <div class="chat-header">
+                <div class="chat-header-info">
+                    <span id="current-chat-name">Выберите чат</span>
+                    <span style="font-size:0.8rem; color:#22c55e; font-weight:400;" id="chat-encryption"> E2E</span>
+                </div>
+                <div class="chat-header-actions">
+                    <button class="icon-btn" title="Аудиозвонок" onclick="startCall('audio')"></button>
+                    <button class="icon-btn" title="Видеозвонок" onclick="startCall('video')">🎥</button>
+                    <button class="icon-btn" title="Демонстрация экрана" onclick="startScreenShare()">️</button>
+                </div>
+            </div>
+            
+            <div class="chat-messages" id="chat-messages">
+                <div class="empty-state">
+                    <p style="font-size: 1.2rem; margin-bottom: 10px;">Добро пожаловать в PagooTalk</p>
+                    <p style="font-size: 0.9rem;">Выберите чат или создайте новый</p>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <input type="file" id="media-input" style="display:none" onchange="handleMediaSelect(this)">
+                <button class="icon-btn" onclick="document.getElementById('media-input').click()" title="Прикрепить файл">📎</button>
+                <input type="text" class="chat-input" id="message-input" placeholder="Введите сообщение...">
+                <button class="icon-btn" style="background:var(--accent-gradient); color:white;" onclick="sendMessage()">➤</button>
+            </div>
+
+            <div id="group-call-overlay">
+                <div class="call-main-area">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <h3 id="call-title">Звонок</h3>
+                        <button class="icon-btn" onclick="endCall()" title="Свернуть">✖️</button>
+                    </div>
+                    <div class="call-grid" id="call-grid"></div>
+                    <div class="call-controls-bar">
+                        <button class="control-btn" id="btn-mic" onclick="toggleMic()" title="Микрофон">🎙️</button>
+                        <button class="control-btn" id="btn-cam" onclick="toggleCamera()" title="Камера">🎥</button>
+                        <button class="control-btn" id="btn-screen" onclick="toggleScreenShare()" title="Демонстрация экрана">🖥️</button>
+                        <button class="control-btn danger" onclick="endCall()" title="Завершить">📵</button>
+                    </div>
+                </div>
+                <div class="call-sidebar">
+                    <h4>Участники (<span id="participant-count">0</span>)</h4>
+                    <div class="participant-list" id="participant-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. УТИЛИТЫ
+        // ==========================================
+        const MAX_FILE_SIZE = 67 * 1024 * 1024; // 67 MB
+        const CHUNK_SIZE = 32000; // Размер чанка для WebRTC DataChannel
+
+        function setCookie(name, value, days) {
+            const d = new Date();
+            d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+            document.cookie = `${name}=${encodeURIComponent(value)};expires=${d.toUTCString()};path=/`;
+        }
+        function getCookie(name) {
+            const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+            return match ? decodeURIComponent(match[2]) : null;
+        }
+
+        function generateID() {
+            const d = () => Math.floor(Math.random() * 10);
+            const L = () => String.fromCharCode(97 + Math.floor(Math.random() * 26));
+            return `${d()}${L()}${L()}${L()}${L()}-${L()}${d()}${L()}${L()}${L()}-${L()}${L()}${d()}${L()}${L()}-${L()}${L()}${L()}${d()}${L()}-${L()}${L()}${L()}${L()}${d()}`;
+        }
+
+        function validateName(name) {
+            const trimmed = name.trim();
+            if (trimmed.length === 0) return false;
+            return /^[\p{L}\s\-']+$/u.test(trimmed);
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' Б';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' КБ';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
+        }
+
+        function getFileIcon(mimeType, fileName) {
+            if (mimeType.startsWith('image/')) return '🖼️';
+            if (mimeType.startsWith('video/')) return '🎬';
+            if (mimeType.startsWith('audio/')) return '';
+            if (mimeType.includes('pdf')) return '📄';
+            if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z')) return '️';
+            if (mimeType.includes('doc') || mimeType.includes('word')) return '📝';
+            if (mimeType.includes('sheet') || mimeType.includes('excel')) return '';
+            if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return '';
+            if (mimeType.includes('text')) return '📃';
+            const ext = fileName.split('.').pop().toLowerCase();
+            const iconMap = { js: '', html: '🌐', css: '🎨', py: '', txt: '📃', json: '📋' };
+            return iconMap[ext] || '📦';
+        }
+
+        function isMediaFile(mimeType) {
+            return ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'video/mp4', 'video/webm'].includes(mimeType.toLowerCase());
+        }
+
+        // ==========================================
+        // 2. СОСТОЯНИЕ ПРИЛОЖЕНИЯ
+        // ==========================================
+        let myId = getCookie('pagootalk_id');
+        let myProfile = JSON.parse(localStorage.getItem('pagootalk_profile') || 'null');
+        let chats = JSON.parse(localStorage.getItem('pagootalk_chats') || '{}');
+        let activeChatId = null;
+        let groupInvites = JSON.parse(localStorage.getItem('pagootalk_invites') || '{}');
+
+        let peers = {};
+        let localStream = null;
+        let screenStream = null;
+        let isMicMuted = false;
+        let isCamOff = false;
+        let isScreenSharing = false;
+        let currentCallType = null;
+        let fileTransferBuffers = {}; // { msgId: { chunks: {}, total: N, meta: {} } }
+
+        // ==========================================
+        // 3. ИНИЦИАЛИЗАЦИЯ И ПРОФИЛЬ
+        // ==========================================
+        function init() {
+            if (!myId) {
+                myId = generateID();
+                setCookie('pagootalk_id', myId, 365);
+            }
+            document.getElementById('my-id-display').textContent = myId;
+
+            if (!myProfile) {
+                document.getElementById('profile-modal').classList.add('active');
+            } else {
+                updateProfileUI();
+                requestNotificationPermission();
+            }
+            renderChatList();
+        }
+
+        async function saveProfile() {
+            const first = document.getElementById('first-name').value.trim();
+            const last = document.getElementById('last-name').value.trim();
+            const fileInput = document.getElementById('avatar-input');
+            const errorEl = document.getElementById('profile-error');
+
+            if (!validateName(first)) {
+                errorEl.textContent = "Имя должно содержать только буквы, пробелы, дефисы и апострофы.";
+                errorEl.style.display = 'block';
+                return;
+            }
+            if (!validateName(last)) {
+                errorEl.textContent = "Фамилия должна содержать только буквы, пробелы, дефисы и апострофы.";
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            let avatarData = null;
+            if (fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                if (file.size > MAX_FILE_SIZE) {
+                    errorEl.textContent = `Файл слишком большой! Максимум 67 МБ.`;
+                    errorEl.style.display = 'block';
+                    return;
+                }
+                // Сохраняем аватар как base64 data URL
+                const base64 = await fileToBase64(file);
+                avatarData = base64;
+            }
+
+            try {
+                myProfile = { firstName: first, lastName: last, avatar: avatarData };
+                localStorage.setItem('pagootalk_profile', JSON.stringify(myProfile));
+                document.getElementById('profile-modal').classList.remove('active');
+                updateProfileUI();
+                requestNotificationPermission();
+            } catch (e) {
+                errorEl.textContent = "Ошибка сохранения профиля: " + e.message;
+                errorEl.style.display = 'block';
+            }
+        }
+
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function updateProfileUI() {
+            const name = `${myProfile.firstName} ${myProfile.lastName}`;
+            document.getElementById('my-display-name').textContent = name;
+            const avatarEl = document.getElementById('my-avatar');
+            if (myProfile.avatar) {
+                avatarEl.innerHTML = `<img src="${myProfile.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+            } else {
+                avatarEl.textContent = myProfile.firstName[0].toUpperCase();
+            }
+        }
+
+        function editProfile() {
+            document.getElementById('first-name').value = myProfile.firstName;
+            document.getElementById('last-name').value = myProfile.lastName;
+            document.getElementById('profile-error').style.display = 'none';
+            document.getElementById('profile-modal').classList.add('active');
+        }
+
+        // ==========================================
+        // 4. ЧАТЫ И ГРУППЫ
+        // ==========================================
+        function openNewChat() {
+            const input = document.getElementById('new-chat-id');
+            const btn = document.getElementById('add-chat-btn');
+            if (input.style.display === 'none' || !input.style.display) {
+                input.style.display = 'block';
+                btn.style.display = 'block';
+                input.placeholder = "Введите ID пользователя или код";
+            } else {
+                input.style.display = 'none';
+                btn.style.display = 'none';
+            }
+        }
+
+        function openGroupModal() {
+            document.getElementById('group-modal').classList.add('active');
+        }
+
+        function createGroup() {
+            const name = document.getElementById('group-name').value.trim();
+            const type = document.getElementById('invite-type').value;
+            if (!name) return;
+
+            const groupId = 'grp_' + generateID();
+            const inviteCode = type === 'single' ? '1_' + generateID() : 'M_' + generateID();
+            
+            groupInvites[inviteCode] = { groupId, name, used: false, type, creator: myId };
+            localStorage.setItem('pagootalk_invites', JSON.stringify(groupInvites));
+
+            chats[groupId] = {
+                id: groupId,
+                name: name,
+                type: 'group',
+                members: [myId],
+                messages: [],
+                lastActivity: Date.now()
+            };
+            saveChats();
+            renderChatList();
+            selectChat(groupId);
+
+            const display = document.getElementById('invite-code-display');
+            display.textContent = `Код приглашения: ${inviteCode} (${type === 'single' ? 'одноразовый' : 'многоразовый'})`;
+            display.style.display = 'block';
+        }
+
+        function processInviteOrId() {
+            const input = document.getElementById('new-chat-id').value.trim();
+            
+            if (groupInvites[input]) {
+                const invite = groupInvites[input];
+                if (invite.type === 'single' && invite.used) {
+                    alert('Этот код уже был использован!');
+                    return;
+                }
+                if (!chats[invite.groupId]) {
+                    chats[invite.groupId] = {
+                        id: invite.groupId, name: invite.name, type: 'group',
+                        members: [myId], messages: [], lastActivity: Date.now()
+                    };
+                } else if (!chats[invite.groupId].members.includes(myId)) {
+                    chats[invite.groupId].members.push(myId);
+                }
+                if (invite.type === 'single') {
+                    invite.used = true;
+                    localStorage.setItem('pagootalk_invites', JSON.stringify(groupInvites));
+                }
+                saveChats();
+                renderChatList();
+                selectChat(invite.groupId);
+                document.getElementById('new-chat-id').style.display = 'none';
+                document.getElementById('add-chat-btn').style.display = 'none';
+                return;
+            }
+
+            const regex = /^\d[a-zA-Z]{4}-[a-zA-Z]\d[a-zA-Z]{3}-[a-zA-Z]{2}\d[a-zA-Z]{2}-[a-zA-Z]{3}\d[a-zA-Z]-[a-zA-Z]{4}\d$/;
+            if (regex.test(input) && input !== myId) {
+                if (!chats[input]) {
+                    chats[input] = { id: input, name: input, type: 'dm', members: [myId, input], messages: [], lastActivity: Date.now() };
+                    saveChats();
+                }
+                renderChatList();
+                selectChat(input);
+                document.getElementById('new-chat-id').style.display = 'none';
+                document.getElementById('add-chat-btn').style.display = 'none';
+            } else {
+                alert('Неверный ID или код приглашения');
+            }
+        }
+
+        function saveChats() {
+            localStorage.setItem('pagootalk_chats', JSON.stringify(chats));
+        }
+
+        function renderChatList() {
+            const list = document.getElementById('chat-list');
+            list.innerHTML = '';
+            const sorted = Object.values(chats).sort((a, b) => b.lastActivity - a.lastActivity);
+
+            sorted.forEach(chat => {
+                const div = document.createElement('div');
+                div.className = `chat-item ${activeChatId === chat.id ? 'active' : ''}`;
+                div.onclick = () => selectChat(chat.id);
+                
+                const lastMsg = chat.messages.length > 0 ? chat.messages[chat.messages.length - 1] : null;
+                let lastText = 'Нет сообщений';
+                if (lastMsg) {
+                    if (lastMsg.type === 'file') lastText = '📎 ' + (lastMsg.fileName || 'Файл');
+                    else if (lastMsg.type === 'media') lastText = (lastMsg.mediaType?.startsWith('image/') ? '🖼️ ' : '🎬 ') + (lastMsg.comment || 'Медиа');
+                    else lastText = lastMsg.text;
+                }
+                const isNew = activeChatId !== chat.id && chat.messages.some(m => m.sender !== myId && !m.read);
+
+                div.innerHTML = `
+                    <div class="avatar" style="width:40px;height:40px;font-size:0.9rem;">${chat.type === 'group' ? '👥' : '👤'}</div>
+                    <div class="chat-details">
+                        <div class="chat-name">${chat.name}</div>
+                        <div class="chat-last-msg">${lastText.substring(0, 35)}${lastText.length > 35 ? '...' : ''}</div>
+                    </div>
+                    ${isNew ? '<span class="unread-badge">New</span>' : ''}
+                `;
+                list.appendChild(div);
+            });
+        }
+
+        function selectChat(id) {
+            activeChatId = id;
+            const chat = chats[id];
+            document.getElementById('current-chat-name').textContent = chat.name;
+            chat.messages.forEach(m => { if (m.sender !== myId) m.read = true; });
+            saveChats();
+            renderChatList();
+            renderMessages();
+        }
+
+        function getProfileById(id) {
+            if (id === myId) return myProfile;
+            return { firstName: 'User', lastName: id.substring(0,4) };
+        }
+
+        function renderMessages() {
+            const container = document.getElementById('chat-messages');
+            const chat = chats[activeChatId];
+            if (!chat || chat.messages.length === 0) {
+                container.innerHTML = `<div class="empty-state"><p>Начните беседу в ${chat ? chat.name : 'чате'}</p></div>`;
+                return;
+            }
+            container.innerHTML = '';
+            chat.messages.forEach(msg => {
+                const div = document.createElement('div');
+                div.className = `message-bubble ${msg.sender === myId ? '' : 'incoming'}`;
+                
+                let content = '';
+                if (chat.type === 'group' && msg.sender !== myId) {
+                    const senderProfile = getProfileById(msg.sender);
+                    content += `<div class="message-sender">${senderProfile ? senderProfile.firstName + ' ' + senderProfile.lastName : msg.sender}</div>`;
+                }
+
+                if (msg.type === 'media') {
+                    if (msg.mediaType && msg.mediaType.startsWith('image/')) {
+                        content += `<img src="${msg.content}" class="message-media message-media-img" onclick="window.open(this.src)">`;
+                    } else if (msg.mediaType && msg.mediaType.startsWith('video/')) {
+                        content += `<video src="${msg.content}" class="message-media message-media-video" controls></video>`;
+                    } else {
+                        content += renderFileAttachment(msg);
+                    }
+                    if (msg.comment) content += `<div class="message-comment">${msg.comment}</div>`;
+                } else if (msg.type === 'file') {
+                    content += renderFileAttachment(msg);
+                    if (msg.comment) content += `<div class="message-comment">${msg.comment}</div>`;
+                } else {
+                    content += `<div>${msg.text}</div>`;
+                }
+                content += `<div class="message-time">${msg.time}</div>`;
+                
+                div.innerHTML = content;
+                container.appendChild(div);
+            });
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function renderFileAttachment(msg) {
+            const icon = getFileIcon(msg.mediaType || '', msg.fileName || 'file');
+            const size = formatFileSize(msg.fileSize || 0);
+            return `
+                <div class="file-attachment">
+                    <div class="file-icon">${icon}</div>
+                    <div class="file-info">
+                        <div class="file-name" title="${msg.fileName || ''}">${msg.fileName || 'Файл'}</div>
+                        <div class="file-size">${size}</div>
+                    </div>
+                    <a href="${msg.content}" download="${msg.fileName || 'file'}" class="file-download">⬇️</a>
+                </div>
+            `;
+        }
+
+        // ==========================================
+        // 5. ОТПРАВКА СООБЩЕНИЙ И ФАЙЛОВ
+        // ==========================================
+        function sendMessage() {
+            const input = document.getElementById('message-input');
+            const text = input.value.trim();
+            if (!text || !activeChatId) return;
+
+            const msg = {
+                id: Date.now().toString(),
+                sender: myId,
+                type: 'text',
+                text: text,
+                time: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
+                read: false
+            };
+
+            addMessageToChat(msg);
+            input.value = '';
+            broadcastMessage(msg);
+        }
+
+        async function handleMediaSelect(input) {
+            const file = input.files[0];
+            if (!file || !activeChatId) return;
+            if (file.size > MAX_FILE_SIZE) {
+                alert(`Файл слишком большой! Максимум 67 МБ.`);
+                return;
+            }
+
+            const comment = prompt("Добавить комментарий к файлу (необязательно):") || "";
+            const msgId = Date.now().toString();
+            const localUrl = URL.createObjectURL(file);
+            const isMedia = isMediaFile(file.type);
+            const msgType = isMedia ? 'media' : 'file';
+
+            // Мета-сообщение
+            const metaMsg = {
+                id: msgId,
+                sender: myId,
+                type: msgType,
+                mediaType: file.type,
+                fileName: file.name,
+                fileSize: file.size,
+                totalChunks: Math.ceil(file.size / CHUNK_SIZE),
+                comment: comment,
+                time: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
+                read: false
+            };
+
+            // Локально показываем сразу через blob URL
+            const localMsg = {...metaMsg, content: localUrl};
+            addMessageToChat(localMsg);
+
+            // Передаем метаданные через localStorage/WebRTC
+            broadcastMessage(metaMsg);
+
+            // Отправляем файл чанками
+            sendFileChunks(file, msgId, metaMsg.totalChunks);
+
+            input.value = '';
+        }
+
+        async function sendFileChunks(file, msgId, totalChunks) {
+            // Для больших файлов используем чанкинг через WebRTC DataChannel
+            // Для демо между вкладками также сохраняем в IndexedDB/localStorage частями
+            
+            const fileBuffer = await file.arrayBuffer();
+            
+            // Сохраняем чанки в localStorage для демо между вкладками
+            for (let i = 0; i < totalChunks; i++) {
+                const chunk = fileBuffer.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+                // Конвертируем в base64 для хранения в localStorage
+                const base64Chunk = arrayBufferToBase64(chunk);
+                
+                const chunkMsg = {
+                    type: 'chunk',
+                    msgId: msgId,
+                    index: i,
+                    total: totalChunks,
+                    data: base64Chunk
+                };
+                
+                // Сохраняем в localStorage для демо
+                localStorage.setItem(`pagootalk_chunk_${msgId}_${i}`, JSON.stringify(chunkMsg));
+                
+                // Отправляем через WebRTC пирам
+                Object.values(peers).forEach(peer => {
+                    if (peer.connected) {
+                        try {
+                            peer.send(JSON.stringify({ type: 'chunk', to: activeChatId, payload: chunkMsg }));
+                        } catch(e) {}
+                    }
+                });
+            }
+            
+            // Сигнал завершения передачи
+            const finishMsg = {
+                type: 'chunk_finish',
+                msgId: msgId,
+                total: totalChunks
+            };
+            localStorage.setItem(`pagootalk_chunk_${msgId}_finish`, JSON.stringify(finishMsg));
+            Object.values(peers).forEach(peer => {
+                if (peer.connected) {
+                    try {
+                        peer.send(JSON.stringify({ type: 'chunk_finish', to: activeChatId, payload: finishMsg }));
+                    } catch(e) {}
+                }
+            });
+        }
+
+        function arrayBufferToBase64(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+
+        function base64ToArrayBuffer(base64) {
+            const binaryString = atob(base64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        function addMessageToChat(msg) {
+            if (!chats[activeChatId]) return;
+            chats[activeChatId].messages.push(msg);
+            chats[activeChatId].lastActivity = Date.now();
+            saveChats();
+            renderMessages();
+            renderChatList();
+        }
+
+        // ==========================================
+        // 6. ПОЛУЧЕНИЕ ДАННЫХ
+        // ==========================================
+        function handleIncomingData(data) {
+            const targetChat = data.to;
+            
+            // Авто-создание чата при получении сообщения
+            if (!chats[targetChat] && (data.type === 'message' || data.type === 'chunk' || data.type === 'chunk_finish')) {
+                chats[targetChat] = { 
+                    id: targetChat, name: targetChat, type: 'dm', 
+                    members: [myId, data.payload?.sender || 'unknown'], 
+                    messages: [], lastActivity: Date.now() 
+                };
+            }
+
+            if (data.type === 'message') {
+                const msg = data.payload;
+                if (msg.sender === myId) return;
+                if (!chats[targetChat]) return;
+                
+                // Если это медиа/файл без контента (только мета), создаем плейсхолдер
+                if ((msg.type === 'media' || msg.type === 'file') && !msg.content) {
+                    fileTransferBuffers[msg.id] = {
+                        chunks: {},
+                        total: msg.totalChunks,
+                        meta: msg,
+                        chatId: targetChat
+                    };
+                    // Добавляем плейсхолдер
+                    chats[targetChat].messages.push({...msg, content: '', time: msg.time || new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})});
+                } else {
+                    chats[targetChat].messages.push(msg);
+                }
+                chats[targetChat].lastActivity = Date.now();
+                saveChats();
+                renderChatList();
+                if (activeChatId === targetChat) renderMessages();
+                showNotification(chats[targetChat].name, msg.type === 'text' ? msg.text : 'Новый файл');
+                
+            } else if (data.type === 'chunk') {
+                const chunk = data.payload;
+                if (!fileTransferBuffers[chunk.msgId]) {
+                    fileTransferBuffers[chunk.msgId] = { chunks: {}, total: chunk.total, meta: null, chatId: targetChat };
+                }
+                fileTransferBuffers[chunk.msgId].chunks[chunk.index] = chunk.data;
+                
+            } else if (data.type === 'chunk_finish') {
+                const finish = data.payload;
+                const buffer = fileTransferBuffers[finish.msgId];
+                if (!buffer || !buffer.meta) return;
+                
+                // Собираем файл
+                const chunks = [];
+                for (let i = 0; i < buffer.total; i++) {
+                    if (buffer.chunks[i]) {
+                        chunks.push(base64ToArrayBuffer(buffer.chunks[i]));
+                    }
+                }
+                const totalLength = chunks.reduce((acc, c) => acc + c.byteLength, 0);
+                const combined = new Uint8Array(totalLength);
+                let offset = 0;
+                chunks.forEach(c => {
+                    combined.set(new Uint8Array(c), offset);
+                    offset += c.byteLength;
+                });
+                
+                const blob = new Blob([combined], { type: buffer.meta.mediaType });
+                const url = URL.createObjectURL(blob);
+                
+                // Обновляем сообщение с URL
+                const msgIndex = chats[targetChat].messages.findIndex(m => m.id === finish.msgId);
+                if (msgIndex >= 0) {
+                    chats[targetChat].messages[msgIndex].content = url;
+                    saveChats();
+                    if (activeChatId === targetChat) renderMessages();
+                }
+                
+                delete fileTransferBuffers[finish.msgId];
+            } else if (data.type === 'signal') {
+                handleSignal(data.payload);
+            } else if (data.type === 'call_request') {
+                handleCallRequest(data.payload);
+            }
+        }
+
+        window.addEventListener('storage', (e) => {
+            if (e.key && e.key.startsWith('pagootalk_chunk_') && e.newValue) {
+                const data = JSON.parse(e.newValue);
+                handleIncomingData(data);
+            } else if (e.key === 'pagootalk_sync' && e.newValue) {
+                handleIncomingData(JSON.parse(e.newValue));
+            }
+        });
+
+        function broadcastMessage(msg) {
+            const chat = chats[activeChatId];
+            if (!chat) return;
+
+            const signal = { type: 'message', to: activeChatId, payload: msg, timestamp: Date.now() };
+            localStorage.setItem('pagootalk_sync', JSON.stringify(signal));
+
+            Object.values(peers).forEach(peer => {
+                if (peer.connected) {
+                    try {
+                        peer.send(JSON.stringify(signal));
+                    } catch(e) {}
+                }
+            });
+        }
+
+        // ==========================================
+        // 7. WEBRTC
+        // ==========================================
+        function createPeer(targetId, initiator, stream) {
+            const peer = new SimplePeer({
+                initiator: initiator,
+                stream: stream,
+                trickle: false,
+                config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+            });
+
+            peer.on('signal', data => {
+                const signal = { type: 'signal', to: targetId, payload: data, from: myId, timestamp: Date.now() };
+                localStorage.setItem('pagootalk_sync', JSON.stringify(signal));
+            });
+
+            peer.on('stream', remoteStream => {
+                addVideoTile(targetId, remoteStream, false);
+            });
+
+            peer.on('data', data => {
+                try {
+                    const parsed = JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data));
+                    if (parsed.to === myId || (chats[parsed.to] && chats[parsed.to].members.includes(myId))) {
+                        handleIncomingData(parsed);
+                    }
+                } catch(e) {}
+            });
+
+            peer.on('close', () => {
+                delete peers[targetId];
+                removeVideoTile(targetId);
+            });
+
+            peer.on('error', err => console.error('Peer error:', err));
+
+            peers[targetId] = peer;
+            return peer;
+        }
+
+        function handleSignal(data) {
+            if (!peers[data.from]) {
+                peers[data.from] = createPeer(data.from, false, localStream);
+            }
+            peers[data.from].signal(data.payload);
+        }
+
+        // ==========================================
+        // 8. ЗВОНКИ
+        // ==========================================
+        async function startCall(type) {
+            if (!activeChatId) return alert('Выберите чат');
+            currentCallType = type;
+            document.getElementById('group-call-overlay').classList.add('active');
+            document.getElementById('call-title').textContent = chats[activeChatId].type === 'group' ? 'Групповой звонок' : 'Звонок';
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: !isMicMuted, 
+                    video: (type === 'video' && !isCamOff) 
+                });
+                addVideoTile(myId, localStream, true);
+                updateParticipantList();
+
+                const targets = chats[activeChatId].type === 'group' 
+                    ? chats[activeChatId].members.filter(m => m !== myId)
+                    : [activeChatId];
+
+                targets.forEach(targetId => {
+                    if (!peers[targetId]) {
+                        createPeer(targetId, true, localStream);
+                    } else {
+                        localStream.getTracks().forEach(track => {
+                            peers[targetId].addTrack(track, localStream);
+                        });
+                    }
+                });
+
+                const callReq = { type: 'call_request', to: activeChatId, payload: { type, from: myId }, timestamp: Date.now() };
+                localStorage.setItem('pagootalk_sync', JSON.stringify(callReq));
+
+            } catch (err) {
+                alert('Нет доступа к камере/микрофону: ' + err.message);
+                endCall();
+            }
+        }
+
+        async function startScreenShare() {
+            if (!activeChatId) return alert('Выберите чат');
+            try {
+                screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                screenStream.getAudioTracks().forEach(track => track.enabled = false);
+                isScreenSharing = true;
+                document.getElementById('btn-screen').classList.add('active');
+
+                document.getElementById('group-call-overlay').classList.add('active');
+                addVideoTile(myId + '_screen', screenStream, true, true);
+
+                const targets = chats[activeChatId].type === 'group' 
+                    ? chats[activeChatId].members.filter(m => m !== myId)
+                    : [activeChatId];
+
+                targets.forEach(targetId => {
+                    if (peers[targetId]) {
+                        const sender = peers[targetId]._pc.getSenders().find(s => s.track && s.track.kind === 'video');
+                        if (sender) {
+                            sender.replaceTrack(screenStream.getVideoTracks()[0]);
+                        } else {
+                            screenStream.getTracks().forEach(track => peers[targetId].addTrack(track, screenStream));
+                        }
+                    }
+                });
+
+                screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
+
+            } catch (err) {
+                console.log('Демонстрация отменена');
+            }
+        }
+
+        function stopScreenShare() {
+            if (screenStream) {
+                screenStream.getTracks().forEach(track => track.stop());
+                screenStream = null;
+            }
+            isScreenSharing = false;
+            document.getElementById('btn-screen').classList.remove('active');
+            removeVideoTile(myId + '_screen');
+            
+            if (currentCallType === 'video' && localStream) {
+                const targets = chats[activeChatId].type === 'group' 
+                    ? chats[activeChatId].members.filter(m => m !== myId)
+                    : [activeChatId];
+                targets.forEach(targetId => {
+                    if (peers[targetId]) {
+                        const sender = peers[targetId]._pc.getSenders().find(s => s.track && s.track.kind === 'video');
+                        if (sender && localStream.getVideoTracks().length > 0) {
+                            sender.replaceTrack(localStream.getVideoTracks()[0]);
+                        }
+                    }
+                });
+            } else {
+                endCall();
+            }
+        }
+
+        function toggleScreenShare() {
+            if (isScreenSharing) stopScreenShare();
+            else startScreenShare();
+        }
+
+        function toggleMic() {
+            isMicMuted = !isMicMuted;
+            const btn = document.getElementById('btn-mic');
+            if (isMicMuted) {
+                btn.classList.add('muted');
+                if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = false);
+                if (screenStream) screenStream.getAudioTracks().forEach(t => t.enabled = false);
+            } else {
+                btn.classList.remove('muted');
+                if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = true);
+                if (screenStream) screenStream.getAudioTracks().forEach(t => t.enabled = true);
+            }
+        }
+
+        function toggleCamera() {
+            isCamOff = !isCamOff;
+            const btn = document.getElementById('btn-cam');
+            if (isCamOff) {
+                btn.classList.add('muted');
+                if (localStream) localStream.getVideoTracks().forEach(t => t.enabled = false);
+            } else {
+                btn.classList.remove('muted');
+                if (localStream) localStream.getVideoTracks().forEach(t => t.enabled = true);
+            }
+        }
+
+        function addVideoTile(id, stream, isLocal, isScreen = false) {
+            const grid = document.getElementById('call-grid');
+            if (document.getElementById(`tile-${id}`)) return;
+
+            const tile = document.createElement('div');
+            tile.className = 'video-tile';
+            tile.id = `tile-${id}`;
+            
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            video.autoplay = true;
+            video.playsInline = true;
+            video.muted = isLocal;
+            
+            const name = document.createElement('div');
+            name.className = 'participant-name';
+            name.textContent = isLocal ? 'Вы' : (getProfileById(id)?.firstName || id);
+
+            tile.appendChild(video);
+            tile.appendChild(name);
+            
+            if (isScreen) {
+                const badge = document.createElement('div');
+                badge.className = 'screen-share-badge';
+                badge.textContent = 'ДЕМОНСТРАЦИЯ';
+                tile.appendChild(badge);
+            }
+
+            grid.appendChild(tile);
+        }
+
+        function removeVideoTile(id) {
+            const tile = document.getElementById(`tile-${id}`);
+            if (tile) tile.remove();
+        }
+
+        function updateParticipantList() {
+            const list = document.getElementById('participant-list');
+            list.innerHTML = '';
+            const members = chats[activeChatId].members || [activeChatId];
+            document.getElementById('participant-count').textContent = members.length;
+
+            members.forEach(mid => {
+                const profile = getProfileById(mid);
+                const div = document.createElement('div');
+                div.className = 'participant-item';
+                div.innerHTML = `
+                    <div class="avatar" style="width:30px;height:30px;font-size:0.8rem;">${profile.firstName[0]}</div>
+                    <div style="flex:1;">
+                        <div style="font-weight:600;font-size:0.9rem;">${profile.firstName} ${profile.lastName}</div>
+                        <div style="font-size:0.75rem;color:#666;">${mid === myId ? 'Вы' : 'Участник'}</div>
+                    </div>
+                `;
+                list.appendChild(div);
+            });
+        }
+
+        function endCall() {
+            Object.values(peers).forEach(peer => peer.destroy());
+            peers = {};
+            if (localStream) localStream.getTracks().forEach(t => t.stop());
+            if (screenStream) {
+                screenStream.getTracks().forEach(track => track.stop());
+                screenStream = null;
+            }
+            localStream = null;
+            
+            document.getElementById('call-grid').innerHTML = '';
+            document.getElementById('group-call-overlay').classList.remove('active');
+            document.getElementById('btn-mic').classList.remove('muted');
+            document.getElementById('btn-cam').classList.remove('muted');
+            document.getElementById('btn-screen').classList.remove('active');
+            isMicMuted = false;
+            isCamOff = false;
+            isScreenSharing = false;
+        }
+
+        function handleCallRequest(data) {
+            if (confirm(`Входящий звонок от ${data.from}. Принять?`)) {
+                activeChatId = data.from;
+                startCall(data.type);
+            }
+        }
+
+        // ==========================================
+        // 9. УВЕДОМЛЕНИЯ
+        // ==========================================
+        function requestNotificationPermission() {
+            if ("Notification" in window && Notification.permission !== "granted") {
+                Notification.requestPermission();
+            }
+        }
+
+        function showNotification(title, body) {
+            if (Notification.permission === "granted" && document.hidden) {
+                new Notification(title, { body, icon: myProfile?.avatar || undefined });
+            }
+        }
+
+        // Enter для отправки
+        document.getElementById('message-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        // Старт
+        init();
+    </script>
+</body>
+</html>
