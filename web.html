@@ -449,7 +449,7 @@ transition: background 0.2s;
 <input type="text" id="group-name" placeholder="Название группы">
 <select id="invite-type" style="display:none;"><option value="multi">Многоразовая ссылка</option></select>
 <button class="btn-small" style="width:100%; padding:11px;" id="create-group-btn">Создать</button>
-<div id="invite-code-display" style="margin-top:12px; padding:9px; background:#f3e7ff; border-radius:7px; font-family:'Consolas','Courier New',monospace; display:none; font-size:0.85rem;"></div>
+<div id="invite-code-display" style="margin-top:12px; padding:9px; background:#f3e7ff; border-radius:7px; font-family:'Consolas','Courier New',monospace; display:none; font-size:0.85rem; word-break:all; max-height:150px; overflow-y:auto; user-select:all;"></div>
 </div>
 </div>
 
@@ -479,8 +479,8 @@ transition: background 0.2s;
 <button class="btn-small" id="new-chat-btn">+ Чат</button>
 <button class="btn-small" id="new-group-btn">+ Группа</button>
 </div>
-<input type="text" id="new-chat-id" class="chat-input" style="padding:9px; font-size:0.8rem; display:none;" placeholder="Введите ID пользователя или код">
-<button id="add-chat-btn" class="btn-small" style="display:none; margin-top:6px;">Добавить</button>
+<input type="text" id="new-chat-id" class="chat-input" style="padding:9px; font-size:0.8rem; display:none;" placeholder="Введите ID / Код подключения">
+<button id="add-chat-btn" class="btn-small" style="display:none; margin-top:6px;">Подключиться</button>
 </div>
 <div class="chat-list" id="chat-list"></div>
 </div>
@@ -613,8 +613,8 @@ if (this.onstop) this.onstop();
 var MAX_FILE_SIZE = 67 * 1024 * 1024;
 var MAX_MESSAGES_PER_CHAT = 500;
 var MAX_LOCALSTORAGE_MB = 4.5;
-var SPAM_THRESHOLD_PER_MINUTE = 30;
-var SPAM_BLOCK_DURATION = 5000;
+var SPAM_THRESHOLD_PER_MINUTE = 45;
+var SPAM_BLOCK_DURATION = 3000;
 
 var myId = null;
 var myProfile = null;
@@ -622,10 +622,8 @@ var chats = {};
 var activeChatId = null;
 var groupInvites = {};
 var localStream = null;
-var screenStream = null;
 var isMicMuted = false;
 var isCamOff = false;
-var isScreenSharing = false;
 var currentCallType = null;
 var spamCounters = {};
 var isSpamBlocked = false;
@@ -665,9 +663,7 @@ var L = function () { return String.fromCharCode(97 + Math.floor(Math.random() *
 return d() + L() + L() + L() + L() + "-" + L() + d() + L() + L() + L() + "-" + L() + L() + d() + L() + L() + "-" + L() + L() + L() + d() + L() + "-" + L() + L() + L() + L() + d();
 },
 validateName: function (name) {
-var trimmed = name.trim();
-if (trimmed.length === 0) return false;
-return true;
+return name && name.trim().length > 0;
 },
 validateUsername: function (username) {
 if (!username || username.trim().length === 0) return true;
@@ -681,11 +677,6 @@ var u = username.trim();
 if (u.charAt(0) !== "@") u = "@" + u;
 return u;
 },
-formatFileSize: function (bytes) {
-if (bytes < 1024) return bytes + " Б";
-if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " КБ";
-return (bytes / (1024 * 1024)).toFixed(1) + " МБ";
-},
 objectValues: function (obj) {
 if (!obj) return [];
 var keys = Object.keys(obj);
@@ -695,6 +686,14 @@ return values;
 },
 safeJsonParse: function (str, fallback) {
 try { return JSON.parse(str); } catch (e) { return fallback; }
+},
+chunkString: function (str, size) {
+var numChunks = Math.ceil(str.length / size);
+var chunks = new Array(numChunks);
+for (var i = 0, o = 0; i < numChunks; ++i, o += size) {
+chunks[i] = str.substr(o, size);
+}
+return chunks;
 }
 };
 
@@ -702,8 +701,7 @@ var Storage = {
 safeSetItem: function (key, value) {
 try {
 localStorage.setItem(key, value);
-var sizeMB = Storage.getSize() / (1024 * 1024);
-if (sizeMB > MAX_LOCALSTORAGE_MB) {
+if ((Storage.getSize() / (1024 * 1024)) > MAX_LOCALSTORAGE_MB) {
 Storage.scheduleCleanup();
 }
 } catch (e) {
@@ -731,8 +729,7 @@ storageCleanupScheduled = false;
 },
 cleanup: function () {
 try {
-var sizeMB = Storage.getSize() / (1024 * 1024);
-if (sizeMB <= MAX_LOCALSTORAGE_MB) return;
+if ((Storage.getSize() / (1024 * 1024)) <= MAX_LOCALSTORAGE_MB) return;
 if (!chats) return;
 var keys = Object.keys(chats);
 keys.sort(function (a, b) {
@@ -741,10 +738,10 @@ return (chats[a].lastActivity || 0) - (chats[b].lastActivity || 0);
 for (var i = 0; i < keys.length; i++) {
 var chatId = keys[i];
 var oldMsgs = chats[chatId].messages;
-if (oldMsgs && oldMsgs.length > 50) {
-chats[chatId].messages = oldMsgs.slice(-50);
+if (oldMsgs && oldMsgs.length > 30) {
+chats[chatId].messages = oldMsgs.slice(-30);
 Storage.saveChats();
-if (Storage.getSize() / (1024 * 1024) < MAX_LOCALSTORAGE_MB) break;
+if ((Storage.getSize() / (1024 * 1024)) < MAX_LOCALSTORAGE_MB) break;
 }
 }
 } catch (e) {}
@@ -826,6 +823,60 @@ return last.text || "";
 }
 };
 
+var MessageAssembler = {
+incomingChunks: {},
+sendLargeMessage: function (peer, packetType, targetChatId, payload, metaData) {
+var msgId = Utils.generateID();
+var rawStr = (typeof payload === 'string') ? payload : JSON.stringify(payload);
+var chunks = Utils.chunkString(rawStr, 16384);
+var total = chunks.length;
+
+for (var i = 0; i < total; i++) {
+var chunkPacket = {
+type: 'chunked_envelope',
+senderId: myId,
+senderProfile: myProfile,
+chatId: targetChatId,
+msgId: msgId,
+packetType: packetType,
+index: i,
+total: total,
+data: chunks[i],
+meta: metaData || {}
+};
+try {
+peer.send(JSON.stringify(chunkPacket));
+} catch(e) {}
+}
+},
+handleIncomingEnvelope: function (envelope, pKey) {
+var key = envelope.senderId + '_' + envelope.msgId;
+if (!this.incomingChunks[key]) {
+this.incomingChunks[key] = {
+chunks: new Array(envelope.total),
+receivedCount: 0,
+total: envelope.total
+};
+}
+var record = this.incomingChunks[key];
+if (record.chunks[envelope.index] === undefined) {
+record.chunks[envelope.index] = envelope.data;
+record.receivedCount++;
+}
+if (record.receivedCount === record.total) {
+var completeStr = record.chunks.join('');
+delete this.incomingChunks[key];
+
+if (envelope.packetType === 'chat-msg') {
+var originalMsg = Utils.safeJsonParse(completeStr, null);
+if (originalMsg) {
+NetworkManager.processReceivedMessage(envelope.chatId, originalMsg, envelope.senderProfile, pKey);
+}
+}
+}
+}
+};
+
 var NetworkManager = {
   createPeer: function (targetChatId, isInitiator, connectionId) {
     var pKey = targetChatId + ':' + connectionId;
@@ -867,60 +918,13 @@ var NetworkManager = {
 
     peer.on('data', function (rawData) {
       var dataStr = rawData.toString();
-      var packet = Utils.safeJsonParse(dataStr, null);
-      if (!packet) return;
+      var envelope = Utils.safeJsonParse(dataStr, null);
+      if (!envelope) return;
 
-      if (!SpamFilter.check(packet.senderId)) return;
+      if (!SpamFilter.check(envelope.senderId)) return;
 
-      if (packet.type === 'chat-msg') {
-        if (!chats[packet.chatId]) {
-          chats[packet.chatId] = {
-            id: packet.chatId,
-            name: packet.senderProfile ? (packet.senderProfile.firstName + ' ' + packet.senderProfile.lastName) : 'Пользователь',
-            type: 'private',
-            messages: [],
-            lastActivity: new Date().getTime(),
-            unread: 0
-          };
-        }
-        
-        var targetChat = chats[packet.chatId];
-        if (!targetChat.messages) targetChat.messages = [];
-        
-        var isDuplicate = false;
-        for (var i = 0; i < targetChat.messages.length; i++) {
-          if (targetChat.messages[i].id === packet.msg.id) {
-            isDuplicate = true;
-            break;
-          }
-        }
-
-        if (!isDuplicate) {
-          targetChat.messages.push(packet.msg);
-          targetChat.lastActivity = new Date().getTime();
-          if (activeChatId !== packet.chatId) {
-            targetChat.unread = (targetChat.unread || 0) + 1;
-          }
-          Storage.saveChats();
-          UI.renderChatList();
-          if (activeChatId === packet.chatId) {
-            UI.scheduleRender();
-          }
-        }
-
-        if (targetChat.type === 'group' && packet.forwarded !== true) {
-          packet.forwarded = true;
-          var forwardStr = JSON.stringify(packet);
-          var currentKeys = Object.keys(activePeers);
-          for (var k = 0; k < currentKeys.length; k++) {
-            if (currentKeys[k].indexOf(packet.chatId + ':') === 0 && currentKeys[k] !== pKey) {
-              var p = activePeers[currentKeys[k]];
-              if (p && p.connected) {
-                try { p.send(forwardStr); } catch(e) {}
-              }
-            }
-          }
-        }
+      if (envelope.type === 'chunked_envelope') {
+        MessageAssembler.handleIncomingEnvelope(envelope, pKey);
       }
     });
 
@@ -952,6 +956,56 @@ var NetworkManager = {
     return peer;
   },
 
+  processReceivedMessage: function (chatId, msg, senderProfile, pKey) {
+    if (!chats[chatId]) {
+      chats[chatId] = {
+        id: chatId,
+        name: senderProfile ? (senderProfile.firstName + ' ' + senderProfile.lastName) : 'Пользователь',
+        type: String(chatId).indexOf('group-') === 0 ? 'group' : 'private',
+        messages: [],
+        lastActivity: new Date().getTime(),
+        unread: 0
+      };
+    }
+
+    var targetChat = chats[chatId];
+    if (!targetChat.messages) targetChat.messages = [];
+
+    var isDuplicate = false;
+    for (var i = 0; i < targetChat.messages.length; i++) {
+      if (targetChat.messages[i].id === msg.id) {
+        isDuplicate = true;
+        break;
+      }
+    }
+
+    if (!isDuplicate) {
+      targetChat.messages.push(msg);
+      targetChat.lastActivity = new Date().getTime();
+      if (activeChatId !== chatId) {
+        targetChat.unread = (targetChat.unread || 0) + 1;
+      }
+      Storage.saveChats();
+      UI.renderChatList();
+      if (activeChatId === chatId) {
+        UI.scheduleRender();
+      }
+    }
+
+    if (targetChat.type === 'group' && msg.forwarded !== true) {
+      msg.forwarded = true;
+      var currentKeys = Object.keys(activePeers);
+      for (var k = 0; k < currentKeys.length; k++) {
+        if (currentKeys[k].indexOf(chatId + ':') === 0 && currentKeys[k] !== pKey) {
+          var p = activePeers[currentKeys[k]];
+          if (p && p.connected) {
+            MessageAssembler.sendLargeMessage(p, 'chat-msg', chatId, msg);
+          }
+        }
+      }
+    }
+  },
+
   handleIncomingToken: function (tokenStr) {
     try {
       var cleanToken = tokenStr.trim();
@@ -960,11 +1014,12 @@ var NetworkManager = {
       if (!packet || !packet.chatId) return false;
 
       if (packet.type === 'signal') {
+        var isGroup = String(packet.chatId).indexOf('group-') === 0;
         if (!chats[packet.chatId]) {
           chats[packet.chatId] = {
             id: packet.chatId,
             name: packet.senderProfile ? (packet.senderProfile.firstName + ' ' + packet.senderProfile.lastName) : 'Чат',
-            type: groupInvites[packet.chatId] ? 'group' : 'private',
+            type: isGroup ? 'group' : 'private',
             messages: [],
             lastActivity: new Date().getTime(),
             unread: 0
@@ -989,24 +1044,14 @@ var NetworkManager = {
   },
 
   broadcastMessage: function (chatId, msgObj) {
-    var packet = {
-      type: 'chat-msg',
-      senderId: myId,
-      senderProfile: myProfile,
-      chatId: chatId,
-      msg: msgObj
-    };
-    var packetStr = JSON.stringify(packet);
     var currentKeys = Object.keys(activePeers);
     var sentCount = 0;
     for (var i = 0; i < currentKeys.length; i++) {
       if (currentKeys[i].indexOf(chatId + ':') === 0) {
         var p = activePeers[currentKeys[i]];
         if (p && p.connected) {
-          try {
-            p.send(packetStr);
-            sentCount++;
-          } catch (e) {}
+          MessageAssembler.sendLargeMessage(p, 'chat-msg', chatId, msgObj);
+          sentCount++;
         }
       }
     }
@@ -1066,6 +1111,8 @@ var lastMsgText = ChatManager.getLastMessageText(c);
 var statusIndicator = "";
 if (c.type === 'private') {
   statusIndicator = (c.status === 'connected') ? " <span style='color:#16a34a;font-size:0.7rem;'>●</span>" : " <span style='color:#ef4444;font-size:0.7rem;'>○</span>";
+} else {
+  statusIndicator = " <span style='color:#a855f7;font-size:0.7rem;'>👥</span>";
 }
 var html = '<div class="avatar">' + initial + '</div>' +
 '<div class="chat-details">' +
@@ -1143,7 +1190,6 @@ h += '<div class="file-attachment">' +
 '<span class="file-icon">🎙️</span>' +
 '<div class="file-info">' +
 '<div class="file-name">Голосовое сообщение</div>' +
-'<div class="file-size">' + (m.duration || "") + '</div>' +
 '</div>' +
 '<button class="file-download" data-url="' + m.fileData + '">Слушать</button>' +
 '</div>';
@@ -1155,7 +1201,7 @@ h += '<div class="message-time">' + (m.time || "") + '</div>';
 b.innerHTML = h;
 area.appendChild(b);
 }
-area.scrollTop = area.scrollHeight;
+area.scrollHeight ? (area.scrollTop = area.scrollHeight) : null;
 var dls = area.getElementsByClassName("file-download");
 for (var j = 0; j < dls.length; j++) {
 dls[j].onclick = function (e) {
@@ -1244,12 +1290,12 @@ $("add-chat-btn").style.display = "none";
 return;
 }
 var targetChatId = val;
-var isGroup = groupInvites[targetChatId] ? true : false;
+var isGroup = String(targetChatId).indexOf('group-') === 0;
 var connId = Utils.generateID();
 if (!chats[targetChatId]) {
 chats[targetChatId] = {
 id: targetChatId,
-name: isGroup ? ("Группа " + targetChatId.substring(0, 4)) : ("Пользователь " + targetChatId.substring(0, 4)),
+name: isGroup ? ("Группа " + targetChatId.substring(6, 10)) : ("Пользователь " + targetChatId.substring(0, 4)),
 type: isGroup ? 'group' : 'private',
 messages: [],
 lastActivity: new Date().getTime(),
@@ -1333,7 +1379,7 @@ $("attach-btn").style.background = "";
 $("attach-btn").innerText = "🎙️";
 } else {
 if (!window.navigator.mediaDevices || !window.navigator.mediaDevices.getUserMedia) {
-alert("Запись звука не поддерживается в этом браузере или приложении.");
+alert("Запись звука не поддерживается в этом браузере.");
 return;
 }
 window.navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
@@ -1356,7 +1402,6 @@ senderId: myId,
 senderName: myProfile.firstName + " " + myProfile.lastName,
 type: "file",
 fileData: base64Data,
-duration: "Голос",
 time: new Date().toLocaleTimeString().substring(0, 5)
 };
 ChatManager.addMessage(msgObj);
