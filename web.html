@@ -636,6 +636,16 @@ var voiceRecorder = null;
 var voiceChunks = [];
 var isVoiceRecording = false;
 
+var activePeers = {};
+
+var iceServersConfig = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun.services.mozilla.com' }
+  ]
+};
+
 function $(id) { return document.getElementById(id); }
 function qs(sel, root) { return (root || document).querySelector(sel); }
 
@@ -816,438 +826,584 @@ return last.text || "";
 }
 };
 
-var UI = {
-showModal: function (id) { $(id).className = "modal-overlay active"; },
-hideModal: function (id) { $(id).className = "modal-overlay"; },
-scheduleRender: function () {
-if (renderQueued) return;
-renderQueued = true;
-setTimeout(function () {
-UI.renderActiveChat();
-renderQueued = false;
-}, 16);
-},
-updateMyProfileDisplay: function () {
-if (!myProfile) {
-$("my-display-name").textContent = "Создайте профиль";
-$("my-username").textContent = "";
-$("my-id-display").textContent = myId || "...";
-$("my-avatar").textContent = "?";
-return;
-}
-var fullName = (myProfile.firstName || "") + " " + (myProfile.lastName || "");
-$("my-display-name").textContent = fullName.trim() || "Без имени";
-$("my-username").textContent = Utils.formatUsername(myProfile.username);
-$("my-id-display").textContent = myId;
-if (myProfile.avatar) {
-$("my-avatar").innerHTML = '<img src="' + myProfile.avatar + '" alt="Avatar">';
-} else {
-var initials = ((myProfile.firstName || "?").charAt(0) + (myProfile.lastName || "").charAt(0)).toUpperCase();
-$("my-avatar").textContent = initials || "?";
-}
-},
-renderChatList: function () {
-var list = $("chat-list");
-list.innerHTML = "";
-if (!chats) return;
-var chatArr = Utils.objectValues(chats);
-chatArr.sort(function (a, b) { return (b.lastActivity || 0) - (a.lastActivity || 0); });
-if (chatArr.length === 0) {
-list.innerHTML = '<div style="text-align:center;color:#8b9bb4;font-size:0.8rem;margin-top:20px;">Нет активных чатов</div>';
-return;
-}
-for (var i = 0; i < chatArr.length; i++) {
-var chat = chatArr[i];
-var item = document.createElement("div");
-item.className = "chat-item" + (chat.id === activeChatId ? " active" : "");
-item.setAttribute("data-id", chat.id);
-var avatarHtml = '<div class="avatar">' + (chat.name ? chat.name.charAt(0).toUpperCase() : "?") + "</div>";
-if (chat.avatar) avatarHtml = '<div class="avatar"><img src="' + chat.avatar + '"></div>';
-var lastMsg = ChatManager.getLastMessageText(chat);
-var unreadHtml = chat.unreadCount ? '<span class="unread-badge">' + chat.unreadCount + "</span>" : "";
-item.innerHTML = avatarHtml + '<div class="chat-details"><div class="chat-name">' + (chat.name || "Чат") + '</div><div class="chat-last-msg">' + lastMsg + "</div></div>" + unreadHtml;
-item.onclick = function () {
-var cid = this.getAttribute("data-id");
-activeChatId = cid;
-if (chats[cid]) chats[cid].unreadCount = 0;
-UI.renderChatList();
-UI.scheduleRender();
-};
-list.appendChild(item);
-}
-},
-renderActiveChat: function () {
-var container = $("chat-messages");
-if (!activeChatId || !chats || !chats[activeChatId]) {
-container.innerHTML = '<div class="empty-state" id="empty-state"><p style="font-size: 1.1rem; margin-bottom: 8px;">Добро пожаловать в PagooTalk</p><p style="font-size: 0.85rem;">Выберите чат или создайте новый</p></div>';
-$("current-chat-name").textContent = "Выберите чат";
-return;
-}
-var chat = chats[activeChatId];
-var leaveBtnHtml = chat.isGroup ? '<button id="leave-group-btn" style="background:none; border:none; color:#ef4444; font-size:0.75rem; cursor:pointer; margin-left:8px;">Выйти</button>' : '';
-$("current-chat-name").innerHTML = (chat.name || "Чат") + leaveBtnHtml;
-if (chat.isGroup && $("leave-group-btn")) {
-$("leave-group-btn").onclick = function(e) {
-if(confirm("Вы уверены, что хотите выйти из этой группы?")) {
-delete chats[activeChatId];
-Storage.saveChats();
-activeChatId = null;
-UI.renderChatList();
-UI.scheduleRender();
-}
-};
-}
-container.innerHTML = "";
-var msgs = chat.messages || [];
-if (msgs.length === 0) {
-container.innerHTML = '<div style="text-align:center;color:#8b9bb4;font-size:0.85rem;margin-top:40px;">Нет сообщений. Отправьте первое!</div>';
-return;
-}
-for (var i = 0; i < msgs.length; i++) {
-var msg = msgs[i];
-var bubble = document.createElement("div");
-bubble.className = "message-bubble" + (msg.senderId === myId ? "" : " incoming");
-var senderHtml = msg.senderId === myId ? "" : '<div class="message-sender">' + (msg.senderName || "Собеседник") + "</div>";
-var contentHtml = "";
-if (msg.type === "text") {
-contentHtml = "<div>" + msg.text + "</div>";
-} else if (msg.type === "file") {
-contentHtml = '<audio src="' + msg.fileData + '" controls style="max-width:100%; height:40px;"></audio>';
-}
-var timeStr = "";
-if (msg.timestamp) {
-var d = new Date(msg.timestamp);
-timeStr = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
-}
-bubble.innerHTML = senderHtml + contentHtml + '<div class="message-time">' + timeStr + "</div>";
-container.appendChild(bubble);
-}
-container.scrollTop = container.scrollHeight;
-}
+var NetworkManager = {
+  createPeer: function (targetChatId, isInitiator, connectionId) {
+    var pKey = targetChatId + ':' + connectionId;
+    if (activePeers[pKey]) {
+      try { activePeers[pKey].destroy(); } catch(e) {}
+    }
+
+    var peer = new SimplePeer({
+      initiator: isInitiator,
+      trickle: false,
+      config: iceServersConfig
+    });
+
+    peer.on('signal', function (data) {
+      var packet = {
+        type: 'signal',
+        senderId: myId,
+        senderProfile: myProfile,
+        chatId: targetChatId,
+        connectionId: connectionId,
+        signalData: data
+      };
+      var rawToken = btoa(unescape(encodeURIComponent(JSON.stringify(packet))));
+      $("invite-code-display").innerText = rawToken;
+      $("invite-code-display").style.display = "block";
+      window.navigator.clipboard.writeText(rawToken);
+    });
+
+    peer.on('connect', function () {
+      if (chats[targetChatId]) {
+        chats[targetChatId].status = 'connected';
+        UI.renderChatList();
+        if (activeChatId === targetChatId) {
+          $("chat-encryption").innerText = "Подключено P2P";
+          $("chat-encryption").style.color = "#16a34a";
+        }
+      }
+    });
+
+    peer.on('data', function (rawData) {
+      var dataStr = rawData.toString();
+      var packet = Utils.safeJsonParse(dataStr, null);
+      if (!packet) return;
+
+      if (!SpamFilter.check(packet.senderId)) return;
+
+      if (packet.type === 'chat-msg') {
+        if (!chats[packet.chatId]) {
+          chats[packet.chatId] = {
+            id: packet.chatId,
+            name: packet.senderProfile ? (packet.senderProfile.firstName + ' ' + packet.senderProfile.lastName) : 'Пользователь',
+            type: 'private',
+            messages: [],
+            lastActivity: new Date().getTime(),
+            unread: 0
+          };
+        }
+        
+        var targetChat = chats[packet.chatId];
+        if (!targetChat.messages) targetChat.messages = [];
+        
+        var isDuplicate = false;
+        for (var i = 0; i < targetChat.messages.length; i++) {
+          if (targetChat.messages[i].id === packet.msg.id) {
+            isDuplicate = true;
+            break;
+          }
+        }
+
+        if (!isDuplicate) {
+          targetChat.messages.push(packet.msg);
+          targetChat.lastActivity = new Date().getTime();
+          if (activeChatId !== packet.chatId) {
+            targetChat.unread = (targetChat.unread || 0) + 1;
+          }
+          Storage.saveChats();
+          UI.renderChatList();
+          if (activeChatId === packet.chatId) {
+            UI.scheduleRender();
+          }
+        }
+
+        if (targetChat.type === 'group' && packet.forwarded !== true) {
+          packet.forwarded = true;
+          var forwardStr = JSON.stringify(packet);
+          var currentKeys = Object.keys(activePeers);
+          for (var k = 0; k < currentKeys.length; k++) {
+            if (currentKeys[k].indexOf(packet.chatId + ':') === 0 && currentKeys[k] !== pKey) {
+              var p = activePeers[currentKeys[k]];
+              if (p && p.connected) {
+                try { p.send(forwardStr); } catch(e) {}
+              }
+            }
+          }
+        }
+      }
+    });
+
+    peer.on('close', function () {
+      delete activePeers[pKey];
+      if (chats[targetChatId] && targetChatId === activeChatId) {
+        var hasActive = false;
+        var currentKeys = Object.keys(activePeers);
+        for (var k = 0; k < currentKeys.length; k++) {
+          if (currentKeys[k].indexOf(targetChatId + ':') === 0) {
+            hasActive = true;
+            break;
+          }
+        }
+        if (!hasActive) {
+          chats[targetChatId].status = 'disconnected';
+          $("chat-encryption").innerText = "Ожидание...";
+          $("chat-encryption").style.color = "#ef4444";
+        }
+      }
+      UI.renderChatList();
+    });
+
+    peer.on('error', function () {
+      peer.destroy();
+    });
+
+    activePeers[pKey] = peer;
+    return peer;
+  },
+
+  handleIncomingToken: function (tokenStr) {
+    try {
+      var cleanToken = tokenStr.trim();
+      var jsonStr = decodeURIComponent(escape(atob(cleanToken)));
+      var packet = JSON.parse(jsonStr);
+      if (!packet || !packet.chatId) return false;
+
+      if (packet.type === 'signal') {
+        if (!chats[packet.chatId]) {
+          chats[packet.chatId] = {
+            id: packet.chatId,
+            name: packet.senderProfile ? (packet.senderProfile.firstName + ' ' + packet.senderProfile.lastName) : 'Чат',
+            type: groupInvites[packet.chatId] ? 'group' : 'private',
+            messages: [],
+            lastActivity: new Date().getTime(),
+            unread: 0
+          };
+        }
+
+        var pKey = packet.chatId + ':' + packet.connectionId;
+        var peer = activePeers[pKey];
+        if (!peer) {
+          peer = NetworkManager.createPeer(packet.chatId, false, packet.connectionId);
+        }
+
+        peer.signal(packet.signalData);
+        Storage.saveChats();
+        UI.renderChatList();
+        return true;
+      }
+    } catch (e) {
+      return false;
+    }
+    return false;
+  },
+
+  broadcastMessage: function (chatId, msgObj) {
+    var packet = {
+      type: 'chat-msg',
+      senderId: myId,
+      senderProfile: myProfile,
+      chatId: chatId,
+      msg: msgObj
+    };
+    var packetStr = JSON.stringify(packet);
+    var currentKeys = Object.keys(activePeers);
+    var sentCount = 0;
+    for (var i = 0; i < currentKeys.length; i++) {
+      if (currentKeys[i].indexOf(chatId + ':') === 0) {
+        var p = activePeers[currentKeys[i]];
+        if (p && p.connected) {
+          try {
+            p.send(packetStr);
+            sentCount++;
+          } catch (e) {}
+        }
+      }
+    }
+    return sentCount;
+  }
 };
 
-function initApp() {
+var UI = {
+showModal: function (id) {
+$(id).className = "modal-overlay active";
+},
+hideModal: function (id) {
+$(id).className = "modal-overlay";
+},
+init: function () {
+Storage.load();
 myId = Utils.getCookie("pagootalk_my_id");
 if (!myId) {
 myId = Utils.generateID();
 Utils.setCookie("pagootalk_my_id", myId, 365);
 }
-Storage.load();
-UI.updateMyProfileDisplay();
-UI.renderChatList();
-if (!myProfile) {
-UI.showModal("profile-modal");
+$("my-id-display").innerText = myId;
+if (!myProfile || !myProfile.firstName) {
+myProfile = { firstName: "Пользователь", lastName: String(myId).substring(0,4), username: "user_" + String(myId).substring(0,4) };
+Storage.saveProfile();
 }
+UI.updateProfileDOM();
+UI.renderChatList();
+UI.setupListeners();
+UI.scheduleRender();
+},
+updateProfileDOM: function () {
+$("my-display-name").innerText = myProfile.firstName + " " + myProfile.lastName;
+$("my-username").innerText = Utils.formatUsername(myProfile.username);
+if (myProfile.avatarData) {
+$("my-avatar").innerHTML = '<img src="' + myProfile.avatarData + '" alt="Avatar">';
+} else {
+$("my-avatar").innerText = String(myProfile.firstName).charAt(0).toUpperCase();
+}
+},
+renderChatList: function () {
+var list = $("chat-list");
+list.innerHTML = "";
+var chatArr = Utils.objectValues(chats);
+chatArr.sort(function (a, b) { return (b.lastActivity || 0) - (a.lastActivity || 0); });
+if (chatArr.length === 0) {
+list.innerHTML = '<div style="text-align:center; padding:20px; color:#8b9bb4; font-size:0.8rem;">Нет активных чатов</div>';
+return;
+}
+for (var i = 0; i < chatArr.length; i++) {
+var c = chatArr[i];
+var div = document.createElement("div");
+div.className = "chat-item" + (activeChatId === c.id ? " active" : "");
+div.setAttribute("data-id", c.id);
+var initial = String(c.name).charAt(0).toUpperCase();
+var lastMsgText = ChatManager.getLastMessageText(c);
+var statusIndicator = "";
+if (c.type === 'private') {
+  statusIndicator = (c.status === 'connected') ? " <span style='color:#16a34a;font-size:0.7rem;'>●</span>" : " <span style='color:#ef4444;font-size:0.7rem;'>○</span>";
+}
+var html = '<div class="avatar">' + initial + '</div>' +
+'<div class="chat-details">' +
+'<div class="chat-name">' + c.name + statusIndicator + '</div>' +
+'<div class="chat-last-msg">' + lastMsgText + '</div>' +
+'</div>';
+if (c.unread && c.unread > 0) {
+html += '<div class="unread-badge">' + c.unread + '</div>';
+}
+div.innerHTML = html;
+div.onclick = (function (id) {
+return function () {
+activeChatId = id;
+if (chats[id]) chats[id].unread = 0;
+Storage.saveChats();
+UI.renderChatList();
+UI.scheduleRender();
+};
+})(c.id);
+list.appendChild(div);
+}
+},
+scheduleRender: function () {
+if (renderQueued) return;
+renderQueued = true;
+setTimeout(function () {
+UI.renderChatArea();
+renderQueued = false;
+}, 50);
+},
+renderChatArea: function () {
+var area = $("chat-messages");
+if (!activeChatId || !chats[activeChatId]) {
+$("current-chat-name").innerText = "Выберите чат";
+$("chat-encryption").innerText = "E2E";
+$("chat-encryption").style.color = "#16a34a";
+area.innerHTML = '<div class="empty-state" id="empty-state"><p style="font-size: 1.1rem; margin-bottom: 8px;">Добро пожаловать в PagooTalk</p><p style="font-size: 0.85rem;">Выберите чат или создайте новый</p></div>';
+return;
+}
+var c = chats[activeChatId];
+$("current-chat-name").innerText = c.name;
+
+if (c.type === 'private') {
+  if (c.status === 'connected') {
+    $("chat-encryption").innerText = "Подключено P2P";
+    $("chat-encryption").style.color = "#16a34a";
+  } else {
+    $("chat-encryption").innerText = "Ожидание...";
+    $("chat-encryption").style.color = "#ef4444";
+  }
+} else {
+  $("chat-encryption").innerText = "Групповой чат";
+  $("chat-encryption").style.color = "#a855f7";
 }
 
-$("edit-profile-btn").onclick = function (e) {
-if (myProfile) {
+area.innerHTML = "";
+var msgs = c.messages || [];
+if (msgs.length === 0) {
+area.innerHTML = '<div style="text-align:center; margin-top:40px; color:#8b9bb4; font-size:0.85rem;">Нет сообщений. Начните общение.</div>';
+return;
+}
+for (var i = 0; i < msgs.length; i++) {
+var m = msgs[i];
+var b = document.createElement("div");
+var isIncoming = m.senderId !== myId;
+b.className = "message-bubble" + (isIncoming ? " incoming" : "");
+var h = "";
+if (isIncoming && m.senderName) {
+h += '<div class="message-sender">' + m.senderName + '</div>';
+}
+if (m.type === "text") {
+h += '<div>' + UI.escapeHTML(m.text) + '</div>';
+} else if (m.type === "file") {
+h += '<div class="file-attachment">' +
+'<span class="file-icon">🎙️</span>' +
+'<div class="file-info">' +
+'<div class="file-name">Голосовое сообщение</div>' +
+'<div class="file-size">' + (m.duration || "") + '</div>' +
+'</div>' +
+'<button class="file-download" data-url="' + m.fileData + '">Слушать</button>' +
+'</div>';
+if (m.text) {
+h += '<div class="message-comment">' + UI.escapeHTML(m.text) + '</div>';
+}
+}
+h += '<div class="message-time">' + (m.time || "") + '</div>';
+b.innerHTML = h;
+area.appendChild(b);
+}
+area.scrollTop = area.scrollHeight;
+var dls = area.getElementsByClassName("file-download");
+for (var j = 0; j < dls.length; j++) {
+dls[j].onclick = function (e) {
+var url = e.target.getAttribute("data-url");
+if (url) {
+var audio = new Audio(url);
+audio.play();
+}
+};
+}
+},
+escapeHTML: function (str) {
+if (!str) return "";
+return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+},
+setupListeners: function () {
+$("user-profile-click").onclick = function () {
 $("first-name").value = myProfile.firstName || "";
 $("last-name").value = myProfile.lastName || "";
 $("user-username").value = myProfile.username || "";
-}
 $("profile-error").style.display = "none";
 $("profile-success").style.display = "none";
 UI.showModal("profile-modal");
 };
-
-$("user-profile-click").onclick = function () {
-$("edit-profile-btn").click();
-};
-
-$("close-profile-modal").onclick = function () {
-if (!myProfile) {
-$("profile-error").textContent = "Вы должны настроить профиль для использования приложения.";
-$("profile-error").style.display = "block";
-return;
-}
-UI.hideModal("profile-modal");
-};
-
+$("close-profile-modal").onclick = function () { UI.hideModal("profile-modal"); };
 $("save-profile-btn").onclick = function () {
 var fn = $("first-name").value;
 var ln = $("last-name").value;
 var un = $("user-username").value;
 if (!Utils.validateName(fn) || !Utils.validateName(ln)) {
-$("profile-error").textContent = "Имя и фамилия обязательны.";
+$("profile-error").innerText = "Имя и фамилия не могут быть пустыми.";
 $("profile-error").style.display = "block";
 return;
 }
-var avatarFile = $("avatar-input").files[0];
-if (avatarFile) {
+if (!Utils.validateUsername(un)) {
+$("profile-error").innerText = "Неверный формат юзернейма.";
+$("profile-error").style.display = "block";
+return;
+}
+myProfile.firstName = fn.trim();
+myProfile.lastName = ln.trim();
+myProfile.username = un.trim();
+var fileInput = $("avatar-input");
+if (fileInput.files && fileInput.files[0]) {
+var f = fileInput.files[0];
+if (f.size > MAX_FILE_SIZE) {
+$("profile-error").innerText = "Файл аватарки слишком большой (макс. 67 МБ).";
+$("profile-error").style.display = "block";
+return;
+}
 var reader = new FileReader();
-reader.onload = function(e) {
-myProfile = { firstName: fn, lastName: ln, username: un, avatar: e.target.result };
+reader.onload = function (e) {
+myProfile.avatarData = e.target.result;
 Storage.saveProfile();
-UI.updateMyProfileDisplay();
-$("profile-error").style.display = "none";
+UI.updateProfileDOM();
 $("profile-success").style.display = "block";
-setTimeout(function () { UI.hideModal("profile-modal"); }, 800);
+setTimeout(function () { UI.hideModal("profile-modal"); }, 1000);
 };
-reader.readAsDataURL(avatarFile);
+reader.readAsDataURL(f);
 } else {
-var oldAvatar = myProfile ? myProfile.avatar : null;
-myProfile = { firstName: fn, lastName: ln, username: un, avatar: oldAvatar };
 Storage.saveProfile();
-UI.updateMyProfileDisplay();
-$("profile-error").style.display = "none";
+UI.updateProfileDOM();
 $("profile-success").style.display = "block";
-setTimeout(function () { UI.hideModal("profile-modal"); }, 800);
+setTimeout(function () { UI.hideModal("profile-modal"); }, 1000);
 }
 };
-
-$("copy-id-btn").onclick = function (e) {
-if (!myId) return;
-navigator.clipboard.writeText(myId).then(function () {
-var btn = $("copy-id-btn");
-btn.textContent = "Copied!";
-setTimeout(function () {
-btn.textContent = "Copy";
-}, 2000);
-});
-};
-
-$("chat-header-clickable").onclick = function() {
-if(!activeChatId || !chats[activeChatId]) return;
-navigator.clipboard.writeText(activeChatId).then(function() {
-var titleEl = $("current-chat-name");
-var originalText = titleEl.innerHTML;
-titleEl.innerHTML = originalText + ' <span style="font-size:0.75rem;color:#16a34a;">(ID Скопирован!)</span>';
-setTimeout(function() {
-titleEl.innerHTML = originalText;
-}, 1500);
-});
-};
-
 $("new-chat-btn").onclick = function () {
-var el = $("new-chat-id");
-var btn = $("add-chat-btn");
-if (el.style.display === "none") {
-el.style.display = "block";
-btn.style.display = "block";
-el.focus();
+var elId = $("new-chat-id");
+var elBtn = $("add-chat-btn");
+if (elId.style.display === "none") {
+elId.style.display = "block";
+elBtn.style.display = "block";
+elId.focus();
 } else {
-el.style.display = "none";
-btn.style.display = "none";
+elId.style.display = "none";
+elBtn.style.display = "none";
 }
 };
-
 $("add-chat-btn").onclick = function () {
 var val = $("new-chat-id").value.trim();
 if (!val) return;
-if (!chats) chats = {};
-if (chats[val]) {
-activeChatId = val;
-UI.renderChatList();
-UI.scheduleRender();
-return;
-}
-var isGroupCode = val.indexOf("group-") === 0;
-var gid = isGroupCode ? val.split("?")[0] : val;
-var gname = isGroupCode ? "Группа: " + gid.substring(6, 12) : "Пользователь: " + val.substring(0, 6);
-var newChat = { id: gid, name: gname, isGroup: isGroupCode, messages: [], unreadCount: 0, lastActivity: new Date().getTime() };
-chats[gid] = newChat;
-Storage.saveChats();
-activeChatId = gid;
 $("new-chat-id").value = "";
+if (NetworkManager.handleIncomingToken(val)) {
 $("new-chat-id").style.display = "none";
 $("add-chat-btn").style.display = "none";
+return;
+}
+var targetChatId = val;
+var isGroup = groupInvites[targetChatId] ? true : false;
+var connId = Utils.generateID();
+if (!chats[targetChatId]) {
+chats[targetChatId] = {
+id: targetChatId,
+name: isGroup ? ("Группа " + targetChatId.substring(0, 4)) : ("Пользователь " + targetChatId.substring(0, 4)),
+type: isGroup ? 'group' : 'private',
+messages: [],
+lastActivity: new Date().getTime(),
+unread: 0
+};
+}
+activeChatId = targetChatId;
+NetworkManager.createPeer(targetChatId, true, connId);
+Storage.saveChats();
 UI.renderChatList();
 UI.scheduleRender();
+$("new-chat-id").style.display = "none";
+$("add-chat-btn").style.display = "none";
 };
-
 $("new-group-btn").onclick = function () {
+$("group-name").value = "";
+$("invite-code-display").style.display = "none";
 UI.showModal("group-modal");
 };
-
-$("close-group-modal").onclick = function () {
-UI.hideModal("group-modal");
-};
-
+$("close-group-modal").onclick = function () { UI.hideModal("group-modal"); };
 $("create-group-btn").onclick = function () {
-var gname = $("group-name").value.trim();
-if (!gname) return;
-var gid = "group-" + Utils.generateID();
-var inviteCode = gid + "?multi";
-if (!groupInvites) groupInvites = {};
-groupInvites[gid] = { type: "multi", creator: myId };
+var gn = $("group-name").value.trim();
+if (!gn) return;
+var gId = "group-" + Utils.generateID();
+groupInvites[gId] = { id: gId, name: gn, type: "multi" };
+chats[gId] = {
+id: gId,
+name: gn,
+type: 'group',
+messages: [],
+lastActivity: new Date().getTime(),
+unread: 0
+};
+activeChatId = gId;
 Storage.saveInvites();
-if (!chats) chats = {};
-chats[gid] = { id: gid, name: gname, isGroup: true, messages: [], unreadCount: 0, lastActivity: new Date().getTime() };
 Storage.saveChats();
-$("invite-code-display").textContent = "Код группы: " + inviteCode;
-$("invite-code-display").style.display = "block";
 UI.renderChatList();
+UI.scheduleRender();
+var initConnId = Utils.generateID();
+NetworkManager.createPeer(gId, true, initConnId);
 };
-
 $("send-btn").onclick = function () {
-if (isSpamBlocked) return;
-var txt = $("message-input").value.trim();
-if (!txt) return;
-if (!SpamFilter.check(myId)) return;
-var msg = { id: Utils.generateID(), senderId: myId, senderName: (myProfile ? (myProfile.firstName || "") : "Я"), type: "text", text: txt, timestamp: new Date().getTime() };
-ChatManager.addMessage(msg);
-$("message-input").value = "";
+if (!activeChatId || isSpamBlocked) return;
+var input = $("message-input");
+var text = input.value.trim();
+if (!text) return;
+input.value = "";
+var msgObj = {
+id: Utils.generateID(),
+senderId: myId,
+senderName: myProfile.firstName + " " + myProfile.lastName,
+type: "text",
+text: text,
+time: new Date().toLocaleTimeString().substring(0, 5)
 };
-
-$("message-input").onkeypress = function (e) {
-if (e.keyCode === 13) $("send-btn").click();
+ChatManager.addMessage(msgObj);
+NetworkManager.broadcastMessage(activeChatId, msgObj);
 };
-
-$("attach-btn").onclick = function (e) {
-if (!activeChatId) return;
+$("message-input").onkeydown = function (e) {
+if (e.keyCode === 13) {
+$("send-btn").onclick();
+}
+};
+$("copy-id-btn").onclick = function () {
+window.navigator.clipboard.writeText(myId).then(function () {
+$("copy-id-btn").innerText = "Copied!";
+$("copy-id-btn").className = "copy-id-btn copied";
+setTimeout(function () {
+$("copy-id-btn").innerText = "Copy";
+$("copy-id-btn").className = "copy-id-btn";
+}, 2000);
+});
+};
+$("attach-btn").onclick = function () {
 if (isVoiceRecording) {
 if (voiceRecorder && voiceRecorder.state !== "inactive") {
 voiceRecorder.stop();
 }
 isVoiceRecording = false;
-$("attach-btn").textContent = "🎙️";
+$("attach-btn").style.background = "";
+$("attach-btn").innerText = "🎙️";
 } else {
-var handleStream = function(stream) {
+if (!window.navigator.mediaDevices || !window.navigator.mediaDevices.getUserMedia) {
+alert("Запись звука не поддерживается в этом браузере или приложении.");
+return;
+}
+window.navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
 voiceChunks = [];
-voiceRecorder = new window.MediaRecorder(stream);
-voiceRecorder.ondataavailable = function (evt) {
-if (evt.data.size > 0 || evt.data) voiceChunks.push(evt.data);
+if (window.MediaRecorder.prototype.start) {
+voiceRecorder = new MediaRecorder(stream);
+voiceRecorder.ondataavailable = function (e) {
+if (e.data && e.data.size > 0) {
+voiceChunks.push(e.data);
+}
 };
 voiceRecorder.onstop = function () {
-var blob = new Blob(voiceChunks, { type: "audio/ogg" });
+var blob = new Blob(voiceChunks, { type: 'audio/wav' });
 var reader = new FileReader();
 reader.onload = function (evt) {
-var msg = { id: Utils.generateID(), senderId: myId, senderName: (myProfile ? (myProfile.firstName || "") : "Я"), type: "file", fileName: "voice.ogg", fileSize: blob.size, mimeType: "audio/ogg", fileData: evt.target.result, timestamp: new Date().getTime() };
-ChatManager.addMessage(msg);
+var base64Data = evt.target.result;
+var msgObj = {
+id: Utils.generateID(),
+senderId: myId,
+senderName: myProfile.firstName + " " + myProfile.lastName,
+type: "file",
+fileData: base64Data,
+duration: "Голос",
+time: new Date().toLocaleTimeString().substring(0, 5)
+};
+ChatManager.addMessage(msgObj);
+NetworkManager.broadcastMessage(activeChatId, msgObj);
 };
 reader.readAsDataURL(blob);
-if(stream.getTracks) {
 var tracks = stream.getTracks();
-for(var i=0; i<tracks.length; i++) tracks[i].stop();
-}
+for (var i = 0; i < tracks.length; i++) tracks[i].stop();
 };
 voiceRecorder.start();
+}
 isVoiceRecording = true;
-$("attach-btn").textContent = "✕";
-};
-var getUserMedia = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
-if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-navigator.mediaDevices.getUserMedia({ audio: true }).then(handleStream)['catch'](function(){});
-} else if (getUserMedia) {
-getUserMedia.call(navigator, { audio: true }, handleStream, function(){});
-}
+$("attach-btn").style.background = "#ef4444";
+$("attach-btn").innerText = "⏹️";
+}).catch(function () {
+alert("Не удалось получить доступ к микрофону.");
+});
 }
 };
-
-function startCallWorkflow(type) {
+$("btn-call-audio").onclick = function () { UI.toggleCallOverlay(true, 'audio'); };
+$("btn-call-video").onclick = function () { UI.toggleCallOverlay(true, 'video'); };
+$("end-call-x-btn").onclick = function () { UI.toggleCallOverlay(false); };
+$("btn-end-call").onclick = function () { UI.toggleCallOverlay(false); };
+},
+toggleCallOverlay: function (show, type) {
+var overlay = $("group-call-overlay");
+if (show) {
+overlay.className = "group-call-overlay active";
 currentCallType = type;
-$("group-call-overlay").className = "call-main-area active";
-var getUserMedia = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
-var success = function(stream) {
-localStream = stream;
-isMicMuted = false;
-isCamOff = type !== "video";
-var localGrid = $("call-grid");
-localGrid.innerHTML = "";
-var tile = document.createElement("div");
-tile.className = "video-tile";
-var vid = document.createElement("video");
-vid.srcObject = stream;
-vid.autoplay = true;
-vid.muted = true;
-var pName = document.createElement("div");
-pName.className = "participant-name";
-pName.textContent = (myProfile ? myProfile.firstName : "Я") + " (Вы)";
-tile.appendChild(vid);
-tile.appendChild(pName);
-localGrid.appendChild(tile);
-$("participant-count").textContent = "1";
-$("participant-list").innerHTML = '<div class="participant-item">👤 ' + (myProfile ? myProfile.firstName : "Я") + "</div>";
-};
-if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-navigator.mediaDevices.getUserMedia({ audio: true, video: type === "video" }).then(success)['catch'](function(){ alert("Ошибка доступа"); });
-} else if (getUserMedia) {
-getUserMedia.call(navigator, { audio: true, video: type === "video" }, success, function(){ alert("Ошибка доступа"); });
-}
-}
-
-$("btn-call-audio").onclick = function () { startCallWorkflow("audio"); };
-$("btn-call-video").onclick = function () { startCallWorkflow("video"); };
-
-$("btn-mic").onclick = function () {
-if (!localStream) return;
-isMicMuted = !isMicMuted;
-var tracks = localStream.getAudioTracks();
-for(var i=0; i<tracks.length; i++) tracks[i].enabled = !isMicMuted;
-$("btn-mic").className = "control-btn" + (isMicMuted ? " muted" : "");
-};
-
-$("btn-cam").onclick = function () {
-if (!localStream) return;
-isCamOff = !isCamOff;
-var tracks = localStream.getVideoTracks();
-for(var i=0; i<tracks.length; i++) tracks[i].enabled = !isCamOff;
-$("btn-cam").className = "control-btn" + (isCamOff ? " muted" : "");
-};
-
-$("btn-screen").onclick = function () {
-if (!isScreenSharing) {
-if(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-navigator.mediaDevices.getDisplayMedia({ video: true }).then(function (stream) {
-screenStream = stream;
-isScreenSharing = true;
-$("btn-screen").className = "control-btn danger";
-var localGrid = $("call-grid");
-var tile = document.createElement("div");
-tile.className = "video-tile video-tile-screen";
-var vid = document.createElement("video");
-vid.srcObject = stream;
-vid.autoplay = true;
-var badge = document.createElement("span");
-badge.className = "screen-share-badge";
-badge.textContent = "Экран";
-var pName = document.createElement("div");
-pName.className = "participant-name";
-pName.textContent = "Ваш экран";
-tile.appendChild(vid);
-tile.appendChild(badge);
-tile.appendChild(pName);
-localGrid.appendChild(tile);
-stream.getVideoTracks()[0].onended = function () {
-stopScreenShare();
-};
-})['catch'](function(){});
-}
+$("call-title").innerText = type === 'video' ? "Видеозвонок" : "Аудиозвонок";
 } else {
-stopScreenShare();
-}
-};
-
-function stopScreenShare() {
-if (screenStream) {
-var tracks = screenStream.getTracks();
-for(var i=0; i<tracks.length; i++) tracks[i].stop();
-screenStream = null;
-}
-isScreenSharing = false;
-$("btn-screen").className = "control-btn";
-var scrTile = qs(".video-tile-screen", $("call-grid"));
-if (scrTile) scrTile.parentNode.removeChild(scrTile);
-}
-
-$("btn-end-call").onclick = function () {
-stopScreenShare();
+overlay.className = "group-call-overlay";
+currentCallType = null;
 if (localStream) {
 var tracks = localStream.getTracks();
-for(var i=0; i<tracks.length; i++) tracks[i].stop();
+for (var i = 0; i < tracks.length; i++) tracks[i].stop();
 localStream = null;
 }
-$("group-call-overlay").className = "call-main-area";
 $("call-grid").innerHTML = "";
+}
+}
 };
 
-$("end-call-x-btn").onclick = function () {
-$("group-call-overlay").className = "call-main-area";
+window.onload = function () {
+UI.init();
 };
-
-window.onload = initApp;
 })();
 </script>
 </body>
-</html> 
+</html>
