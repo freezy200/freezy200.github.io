@@ -1326,6 +1326,7 @@ time: new Date().toLocaleTimeString().substring(0, 5)
 };
 ChatManager.addMessage(msgObj);
 NetworkManager.broadcastMessage(activeChatId, msgObj);
+UI.renderChatArea();
 };
 $("message-input").onkeydown = function (e) {
 if (e.keyCode === 13) {
