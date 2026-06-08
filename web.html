@@ -594,43 +594,10 @@ body {
   margin-top: 24px;
 }
 
-.call-window {
-  position: fixed;
-  background: rgba(20, 10, 35, 0.98);
-  border: 1px solid var(--border);
-  box-shadow: var(--glow);
-  z-index: 999;
-  display: none;
-  flex-direction: column;
-  transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
-}
-
-.call-window.maximized {
-  top: 15px;
-  left: 15px;
-  right: 15px;
-  bottom: 15px;
-  width: calc(100% - 30px);
-  height: calc(100% - 30px);
-  border-radius: 24px;
-  padding: 24px;
-}
-
-.call-window.minimized {
-  bottom: 20px;
-  right: 20px;
-  width: 340px;
-  height: 260px;
-  border-radius: 16px;
-  padding: 14px;
-  top: auto;
-  left: auto;
-}
-
 #videoGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
   background: #04010a;
   padding: 15px;
   border-radius: 16px;
@@ -638,12 +605,6 @@ body {
   flex: 1;
   margin-bottom: 15px;
   border: 1px solid var(--border);
-}
-
-.call-window.minimized #videoGrid {
-  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-  gap: 6px;
-  padding: 8px;
 }
 
 #videoGrid video {
@@ -726,7 +687,7 @@ body {
           </div>
         </div>
         <div style="display: flex; gap: 8px; align-items: center;">
-          <button class="btn-action btn-action-secondary" id="btnCopyGroupId" style="display: none; padding: 8px 12px; font-size: 0.75rem; border-color: var(--accent-blue);">Скопировать ID группы</button>
+          <button class="btn-action btn-action-secondary" id="btnCopyGroupId" style="display: none; padding: 6px 12px; font-size: 0.75rem; border-color: var(--accent-blue);">Скопировать ID группы</button>
           <button class="btn-action btn-action-secondary" id="btnAudioCall" style="padding: 8px 12px; font-size: 0.75rem;">Аудиозвонок</button>
           <button class="btn-action btn-action-primary" id="btnVideoCall" style="padding: 8px 12px; font-size: 0.75rem;">Видеозвонок</button>
         </div>
@@ -758,16 +719,15 @@ body {
   </div>
 </div>
 
-<div class="call-window" id="callWindow">
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-    <h3 class="modal-title" id="callTitle" style="margin-bottom: 0; font-size: 1.1rem;">P2P Звонок</h3>
-    <button class="btn-action btn-action-secondary" id="btnSizeToggle" style="padding: 6px 12px; font-size: 0.75rem; width: auto; flex: none;">Свернуть</button>
-  </div>
-  <div id="videoGrid"></div>
-  <div class="modal-actions-row" style="justify-content: center; gap: 12px; margin-top: 0;">
-    <button class="btn-action btn-action-secondary" id="btnToggleAudio" style="max-width: 120px;">Микр. Вкл</button>
-    <button class="btn-action btn-action-secondary" id="btnToggleVideo" style="max-width: 120px;">Камера Вкл</button>
-    <button class="btn-action btn-action-primary" id="btnEndCall" style="background: linear-gradient(135deg, #ff0055 0%, #aa0033 100%); max-width: 150px;">Завершить</button>
+<div class="overlay-modal" id="callOverlay">
+  <div class="modal-content-box" style="width: 85vw; max-width: 950px; height: 85vh; display: flex; flex-direction: column;">
+    <h3 class="modal-title" id="callTitle">P2P Звонок PagooTalk</h3>
+    <div id="videoGrid"></div>
+    <div class="modal-actions-row" style="justify-content: center; gap: 15px; margin-top: 0;">
+      <button class="btn-action btn-action-secondary" id="btnToggleAudio" style="max-width: 150px;">Микр. Вкл</button>
+      <button class="btn-action btn-action-secondary" id="btnToggleVideo" style="max-width: 150px;">Камера Вкл</button>
+      <button class="btn-action btn-action-primary" id="btnEndCall" style="background: linear-gradient(135deg, #ff0055 0%, #aa0033 100%); max-width: 180px;">Завершить</button>
+    </div>
   </div>
 </div>
 
@@ -801,8 +761,7 @@ var activeConnections = {};
 
 var localStream = null;
 var activeCalls = {};
-var currentIncomingCallInfo = null;
-var pendingCallObject = null;
+var currentIncomingCall = null;
 
 var peer = new Peer(myId, {
   config: {
@@ -811,8 +770,7 @@ var peer = new Peer(myId, {
       { urls: 'stun:stun.sipnet.ru:3478' },
       { urls: 'stun:stun.tagan.ru:3478' },
       { urls: 'stun:stun.skylink.ru:3478' },
-      { urls: 'stun:stun.services.mozilla.com:3478' },
-      { urls: 'stun:stun.l.google.com:19302' }
+      { urls: 'stun:stun.services.mozilla.com:3478' }
     ]
   }
 });
@@ -826,13 +784,9 @@ peer.on('connection', function(conn) {
 });
 
 peer.on('call', function(call) {
-  activeCalls[call.peer] = call;
-  if (localStream) {
-    call.answer(localStream);
-    attachCallEvents(call);
-  } else {
-    pendingCallObject = call;
-  }
+  currentIncomingCall = call;
+  document.getElementById('incomingCallText').innerText = 'Вызов от абонента: ' + call.peer.substring(0, 6) + '...';
+  document.getElementById('incomingCallOverlay').classList.add('visible');
 });
 
 function setupConnectionHandlers(conn) {
@@ -910,9 +864,6 @@ function handleIncomingData(data, senderPeerId) {
           groups[data.groupId].unread = (groups[data.groupId].unread || 0) + 1;
         }
       }
-      if (groups[data.groupId].members.indexOf(data.sender) === -1) {
-        groups[data.groupId].members.push(data.sender);
-      }
     }
     saveData();
     renderLists();
@@ -937,13 +888,6 @@ function handleIncomingData(data, senderPeerId) {
       renderMessages();
       updateHeaderStatus();
     }
-  } else if (data.type === 'call_invite') {
-    currentIncomingCallInfo = data;
-    currentIncomingCallInfo.senderPeerId = senderPeerId;
-    document.getElementById('incomingCallText').innerText = data.isGroup ? 'Входящий групповой вызов' : 'Входящий вызов от ' + senderPeerId.substring(0, 6) + '...';
-    document.getElementById('incomingCallOverlay').classList.add('visible');
-  } else if (data.type === 'call_terminate') {
-    terminateCallTracks();
   }
 }
 
@@ -1127,158 +1071,91 @@ function transmitMessage() {
   input.value = '';
 }
 
-function renderLocalStream() {
-  if (document.getElementById('localVideoElement')) return;
-  var localVid = document.createElement('video');
-  localVid.id = 'localVideoElement';
-  localVid.srcObject = localStream;
-  localVid.autoplay = true;
-  localVid.muted = true;
-  localVid.setAttribute('playsinline', 'true');
-  document.getElementById('videoGrid').appendChild(localVid);
-}
-
 function launchCall(isVideo) {
   navigator.mediaDevices.getUserMedia({ audio: true, video: isVideo }).then(function(stream) {
     localStream = stream;
-    var win = document.getElementById('callWindow');
-    win.style.display = 'flex';
-    win.className = 'call-window maximized';
-    document.getElementById('btnSizeToggle').innerText = 'Свернуть';
-    renderLocalStream();
+    document.getElementById('callOverlay').classList.add('visible');
+    
+    var localVid = document.createElement('video');
+    localVid.srcObject = stream;
+    localVid.autoplay = true;
+    localVid.muted = true;
+    localVid.setAttribute('playsinline', 'true');
+    document.getElementById('videoGrid').appendChild(localVid);
 
     if (currentActiveType === 'chat') {
-      transmitData(currentTargetId, { type: 'call_invite', callType: isVideo ? 'video' : 'audio', isGroup: false });
       var call = peer.call(currentTargetId, stream);
       attachCallEvents(call);
     } else {
       groups[currentTargetId].members.forEach(function(mId) {
         if (mId !== myId) {
-          transmitData(mId, { type: 'call_invite', callType: isVideo ? 'video' : 'audio', isGroup: true, groupId: currentTargetId });
-          if (myId < mId) {
-            var call = peer.call(mId, stream);
-            attachCallEvents(call);
-          }
+          var call = peer.call(mId, stream);
+          attachCallEvents(call);
         }
       });
     }
   }).catch(function(err) {
-    alert('Ошибка мультимедиа: ' + err.message);
+    alert('Ошибка доступа к медиа-устройствам: ' + err.message);
   });
 }
 
 function attachCallEvents(call) {
   activeCalls[call.peer] = call;
   call.on('stream', function(remoteStream) {
-    var remoteVid = document.getElementById('video_' + call.peer);
-    if (!remoteVid) {
-      remoteVid = document.createElement('video');
-      remoteVid.id = 'video_' + call.peer;
-      remoteVid.autoplay = true;
-      remoteVid.setAttribute('playsinline', 'true');
-      document.getElementById('videoGrid').appendChild(remoteVid);
-    }
+    if (document.getElementById('video_' + call.peer)) return;
+    var remoteVid = document.createElement('video');
+    remoteVid.id = 'video_' + call.peer;
     remoteVid.srcObject = remoteStream;
-    remoteVid.play().catch(function(){});
+    remoteVid.autoplay = true;
+    remoteVid.setAttribute('playsinline', 'true');
+    document.getElementById('videoGrid').appendChild(remoteVid);
   });
   call.on('close', function() {
-    removeCallVideo(call.peer);
+    var vid = document.getElementById('video_' + call.peer);
+    if (vid) vid.remove();
+    delete activeCalls[call.peer];
   });
-  call.on('error', function() {
-    removeCallVideo(call.peer);
-  });
-}
-
-function removeCallVideo(peerId) {
-  var vid = document.getElementById('video_' + peerId);
-  if (vid) vid.remove();
-  delete activeCalls[peerId];
 }
 
 document.getElementById('btnAnswerCall').onclick = function() {
   document.getElementById('incomingCallOverlay').classList.remove('visible');
-  var isVideo = currentIncomingCallInfo && currentIncomingCallInfo.callType === 'video';
-  
-  navigator.mediaDevices.getUserMedia({ audio: true, video: isVideo }).then(function(stream) {
+  navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(function(stream) {
     localStream = stream;
-    var win = document.getElementById('callWindow');
-    win.style.display = 'flex';
-    win.className = 'call-window maximized';
-    document.getElementById('btnSizeToggle').innerText = 'Свернуть';
-    renderLocalStream();
+    document.getElementById('callOverlay').classList.add('visible');
+    
+    var localVid = document.createElement('video');
+    localVid.srcObject = stream;
+    localVid.autoplay = true;
+    localVid.muted = true;
+    localVid.setAttribute('playsinline', 'true');
+    document.getElementById('videoGrid').appendChild(localVid);
 
-    if (pendingCallObject) {
-      pendingCallObject.answer(stream);
-      attachCallEvents(pendingCallObject);
-      pendingCallObject = null;
-    }
-
-    if (currentIncomingCallInfo && currentIncomingCallInfo.isGroup) {
-      var gId = currentIncomingCallInfo.groupId;
-      if (groups[gId]) {
-        groups[gId].members.forEach(function(mId) {
-          if (mId !== myId && myId < mId && !activeCalls[mId]) {
-            var call = peer.call(mId, stream);
-            attachCallEvents(call);
-          }
-        });
-      }
-    }
-  }).catch(function(err) {
-    alert('Ошибка мультимедиа при ответе: ' + err.message);
+    currentIncomingCall.answer(stream);
+    attachCallEvents(currentIncomingCall);
+  }).catch(function() {
+    currentIncomingCall.answer();
   });
 };
 
 document.getElementById('btnDeclineCall').onclick = function() {
   document.getElementById('incomingCallOverlay').classList.remove('visible');
-  if (pendingCallObject) {
-    pendingCallObject.close();
-    pendingCallObject = null;
-  }
-  if (currentIncomingCallInfo) {
-    transmitData(currentIncomingCallInfo.senderPeerId, { type: 'call_terminate' });
-    currentIncomingCallInfo = null;
+  if (currentIncomingCall) {
+    currentIncomingCall.close();
+    currentIncomingCall = null;
   }
 };
 
-function terminateCallTracks() {
+document.getElementById('btnEndCall').onclick = function() {
   if (localStream) {
     localStream.getTracks().forEach(function(t) { t.stop(); });
     localStream = null;
   }
   Object.keys(activeCalls).forEach(function(k) {
-    if (activeCalls[k]) activeCalls[k].close();
+    activeCalls[k].close();
   });
   activeCalls = {};
-  pendingCallObject = null;
   document.getElementById('videoGrid').innerHTML = '';
-  document.getElementById('callWindow').style.display = 'none';
-}
-
-document.getElementById('btnEndCall').onclick = function() {
-  if (currentTargetId) {
-    if (currentActiveType === 'chat') {
-      transmitData(currentTargetId, { type: 'call_terminate' });
-    } else if (groups[currentTargetId]) {
-      groups[currentTargetId].members.forEach(function(mId) {
-        if (mId !== myId) transmitData(mId, { type: 'call_terminate' });
-      });
-    }
-  }
-  terminateCallTracks();
-};
-
-document.getElementById('btnSizeToggle').onclick = function() {
-  var win = document.getElementById('callWindow');
-  if (win.classList.contains('maximized')) {
-    win.classList.remove('maximized');
-    win.classList.add('minimized');
-    document.getElementById('btnSizeToggle').innerText = 'Развернуть';
-  } else {
-    win.classList.remove('minimized');
-    win.classList.add('maximized');
-    document.getElementById('btnSizeToggle').innerText = 'Свернуть';
-  }
+  document.getElementById('callOverlay').classList.remove('visible');
 };
 
 document.getElementById('btnToggleAudio').onclick = function() {
@@ -1392,7 +1269,7 @@ document.getElementById('btnConfirmModal').onclick = function() {
       if (parts.length >= 3 && parts[0] === 'GRP') {
         var creatorId = parts[1];
         if (!groups[joinId]) {
-          groups[joinId] = { id: joinId, title: 'Группа ' + joinId.substring(4, 9), messages: [], unread: 0, members: [myId, creatorId] };
+          groups[joinId] = { id: joinId, title: 'Загрузка группы...', messages: [], unread: 0, members: [myId, creatorId] };
           saveData();
         }
         document.getElementById('modalAdd').classList.remove('visible');
